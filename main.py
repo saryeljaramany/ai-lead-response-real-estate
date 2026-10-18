@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from dotenv import load_dotenv
 import os
 
-from routers import leads
+from routers import leads, ai
 
 # =============================================================================
 # Environment Configuration
@@ -32,6 +32,7 @@ app = FastAPI(
 # REGISTER ROUTERS
 # =============================================================================
 app.include_router(leads.router)  # handles /leads routes
+app.include_router(ai.router)     # handles /ai routes
 
 # =============================================================================
 # Endpoints
