@@ -419,19 +419,19 @@ def _classify_error(exc: Exception) -> LeadStoreError:
                 db_code=code,
             )
 
-        if code is not None and code.isdigit() and int(code) >= 500:
-            return LeadStoreError(
-                "Supabase is temporarily unavailable. Retry later."
-                + suffix,
-                category="transient",
-                db_code=code,
-            )
-
         if code in ("23502", "23514", "22P02", "22001"):
             return LeadStoreError(
                 "The database rejected the data. The schema and "
                 "models/lead.py are out of sync." + suffix,
                 category="config",
+                db_code=code,
+            )
+
+        if code is not None and code.isdigit() and len(code) == 3 and 500 <= int(code) <= 599:
+            return LeadStoreError(
+                "Supabase is temporarily unavailable. Retry later."
+                + suffix,
+                category="transient",
                 db_code=code,
             )
 
