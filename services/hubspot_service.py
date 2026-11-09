@@ -552,7 +552,8 @@ def _parse_success(response: httpx.Response) -> tuple[str, bool | None]:
 
         num_errors = body.get("numErrors")
         if isinstance(num_errors, int) and num_errors > 0:
-            raise _classify_failure(response.status_code, body)
+            # 2xx/207 with embedded errors and no usable error status: treat as 400.
+            raise _classify_failure(400, body)
 
     # -- Successful response -------------------------------------------------
     if body is None:
