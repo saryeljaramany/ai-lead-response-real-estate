@@ -26,6 +26,13 @@ MODEL IN USE:
     structured JSON output reliably when prompted explicitly to
     respond only with valid JSON.
 
+BOOKING LINKS (Phase 8):
+    Booking links, recipient addresses, phone numbers and the SMS opt-out are
+    added by code, never echoed by the model. The model writes prose only; it
+    marks the link position with a placeholder token (emails) or a lead-in phrase
+    (SMS). services/calendly_service.py builds the personalised URL, strips any
+    URL the model invents, and guarantees the SMS stays within 160 characters.
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
@@ -325,6 +332,14 @@ def generate_sms(lead: LeadInput, score: LeadScore) -> SMSPayload:
     client = _get_client()
     plan = plan_sms(lead)
 
+    if plan.link:
+        booking_rule = (
+            "End the text with a short phrase that leads into a booking link, "
+            "such as 'Book a viewing here:'. The link itself is appended automatically."
+        )
+    else:
+        booking_rule = "Do not mention booking links or scheduling."
+
     prompt = f"""You are a real estate SMS copywriter.
 Write a short, professional SMS follow-up for the following lead.
 
@@ -342,6 +357,8 @@ SMS guidelines:
 - Be warm, professional, and direct
 - Tailor the reply to the lead's apparent buying, selling, or renting need
 - Mention that an agent will be in touch shortly
+- Do NOT include any URL and do NOT include an opt-out or STOP instruction: both are added automatically.
+- {booking_rule}
 - Count characters carefully before responding
 
 Respond ONLY with a valid JSON object — no markdown, no explanation:
@@ -377,8 +394,6 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
     data = json.loads(raw)
 
     raw_message = data.get("message") if isinstance(data, dict) else None
-    if not isinstance(raw_message, str) or not raw_message.strip():
-        raw_message = data.get("text") if isinstance(data, dict) else None
     if not isinstance(raw_message, str) or not raw_message.strip():
         raise ValueError("The model did not return a usable message.")
 
