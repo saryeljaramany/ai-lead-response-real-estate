@@ -36,6 +36,13 @@ from openai import OpenAI
 
 from models import EmailPayload, LeadInput, LeadScore, SMSPayload
 from models.lead import HOT_SCORE_MIN, MAX_SCORE, MIN_SCORE, WARM_SCORE_MIN
+from services.calendly_service import (
+    LINK_TOKEN,
+    build_booking_link,
+    finish_sms,
+    inject_link_into_email_body,
+    plan_sms,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -190,11 +197,26 @@ def generate_email(lead: LeadInput, score: LeadScore) -> EmailPayload:
 
     Raises:
         json.JSONDecodeError: If the model returns malformed JSON.
+        ValueError: If the model did not return a usable subject and body.
         ValidationError: If the parsed JSON fails EmailPayload validation.
         openai.APIError: On any underlying OpenRouter / network error.
     """
     client = _get_client()
-    calendly_link = os.getenv("CALENDLY_LINK", "")
+    link = build_booking_link(lead, channel="email")
+
+    if link:
+        booking_rule = (
+            "A personalised booking link is inserted automatically. Write "
+            "ONE short call-to-action sentence inviting the lead to book a viewing or "
+            "consultation, then put the exact token " + LINK_TOKEN + " on its own line "
+            "right after that sentence. Never write any URL or web address yourself."
+        )
+    else:
+        booking_rule = (
+            "No booking link is available. Invite the lead to reply to "
+            "this email to arrange a viewing or consultation. Do not mention a link and "
+            "never write any URL or web address."
+        )
 
     prompt = f"""You are a professional real estate sales copywriter.
 Write a personalised follow-up email for the following lead.
@@ -209,26 +231,21 @@ Lead Details:
 
 Lead Score: {score.score}/100 (Category: {score.category})
 Suggested Action: {score.suggested_action}
-{"Calendly Booking Link: " + calendly_link if calendly_link else ""}
 
 Email guidelines:
 - Address the lead by first name only
 - Be warm, professional, and concise (3–4 short paragraphs)
 - Tailor the reply to the lead's apparent buying, selling, or renting need
 - Reference their property type, preferred location, and budget naturally when provided
-- If a Calendly link is provided, include a clear call-to-action for a property viewing or consultation
+- {booking_rule}
 - Do NOT use generic filler phrases like "I hope this email finds you well"
 - Tone: {"urgent and enthusiastic for a ready-to-act home lead" if score.category == "hot" else "helpful and professional for a home buyer, seller, or renter"}
 
 Respond ONLY with a valid JSON object — no markdown, no explanation:
 
 {{
-  "to_email": "{lead.email}",
-  "to_name": "{lead.name}",
   "subject": "<compelling email subject line>",
-  "body": "<full email body as a single string with \\n for line breaks>",
-  "lead_score": {score.score},
-  "calendly_link": {"\"" + calendly_link + "\"" if calendly_link else "null"}
+  "body": "<full email body as a single string with \\n for line breaks>"
 }}"""
 
     response = client.chat.completions.create(
@@ -256,7 +273,27 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
         raw = raw.strip()
 
     data = json.loads(raw)
-    return EmailPayload(**data)
+
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("subject"), str)
+        or not data["subject"].strip()
+        or not isinstance(data.get("body"), str)
+        or not data["body"].strip()
+    ):
+        raise ValueError("The model did not return a usable subject and body.")
+
+    subject = data["subject"].strip()
+    body = inject_link_into_email_body(data["body"], link)
+
+    return EmailPayload(
+        to_email=lead.email,
+        to_name=lead.name,
+        subject=subject,
+        body=body,
+        lead_score=score.score,
+        calendly_link=link,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -280,11 +317,13 @@ def generate_sms(lead: LeadInput, score: LeadScore) -> SMSPayload:
 
     Raises:
         json.JSONDecodeError: If the model returns malformed JSON.
+        ValueError: If the model did not return a usable message.
         ValidationError: If the parsed JSON fails SMSPayload validation
                          (e.g., message exceeds 160 characters).
         openai.APIError: On any underlying OpenRouter / network error.
     """
     client = _get_client()
+    plan = plan_sms(lead)
 
     prompt = f"""You are a real estate SMS copywriter.
 Write a short, professional SMS follow-up for the following lead.
@@ -299,19 +338,16 @@ Lead Details:
 Lead Score: {score.score}/100 (Category: {score.category})
 
 SMS guidelines:
-- CRITICAL: The message MUST be 160 characters or fewer (including spaces)
+- CRITICAL: The message MUST be {plan.text_budget} characters or fewer (including spaces)
 - Be warm, professional, and direct
 - Tailor the reply to the lead's apparent buying, selling, or renting need
-- Mention that a real estate agent will be in touch shortly
-- Include an opt-out instruction: "Reply STOP to opt out"
+- Mention that an agent will be in touch shortly
 - Count characters carefully before responding
 
 Respond ONLY with a valid JSON object — no markdown, no explanation:
 
 {{
-  "to_phone": "{lead.phone}",
-  "message": "<SMS body, max 160 characters>",
-  "lead_score": {score.score}
+  "message": "<SMS text, max {plan.text_budget} characters>"
 }}"""
 
     response = client.chat.completions.create(
@@ -340,11 +376,16 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
 
     data = json.loads(raw)
 
-    # Hard-truncate the message as a last-resort safety net before Pydantic
-    # validation, in case the model slightly overshoots the 160-char limit
-    # despite explicit instructions. The validator will still raise if the
-    # truncated result is empty, preserving the model's integrity.
-    if "message" in data and len(data["message"]) > 160:
-        data["message"] = data["message"][:157] + "..."
+    raw_message = data.get("message") if isinstance(data, dict) else None
+    if not isinstance(raw_message, str) or not raw_message.strip():
+        raw_message = data.get("text") if isinstance(data, dict) else None
+    if not isinstance(raw_message, str) or not raw_message.strip():
+        raise ValueError("The model did not return a usable message.")
 
-    return SMSPayload(**data)
+    message = finish_sms(raw_message, plan, lead)
+
+    return SMSPayload(
+        to_phone=lead.phone,
+        message=message,
+        lead_score=score.score,
+    )
