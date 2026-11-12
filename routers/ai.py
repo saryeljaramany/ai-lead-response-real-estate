@@ -74,7 +74,7 @@ class GenerateSMSRequest(BaseModel):
     response_model=LeadScore,
     summary="Score a lead with AI",
 )
-async def score_lead_endpoint(lead: LeadInput) -> LeadScore:
+def score_lead_endpoint(lead: LeadInput) -> LeadScore:
     """
     Analyse a lead submission and return an AI-generated quality score.
 
@@ -124,7 +124,7 @@ async def score_lead_endpoint(lead: LeadInput) -> LeadScore:
     response_model=EmailPayload,
     summary="Generate a personalised follow-up email for a lead",
 )
-async def generate_email_endpoint(request: GenerateEmailRequest) -> EmailPayload:
+def generate_email_endpoint(request: GenerateEmailRequest) -> EmailPayload:
     """
     Generate a personalised follow-up email for a scored lead.
 
@@ -173,7 +173,7 @@ async def generate_email_endpoint(request: GenerateEmailRequest) -> EmailPayload
     response_model=SMSPayload,
     summary="Generate a concise SMS follow-up for a lead",
 )
-async def generate_sms_endpoint(request: GenerateSMSRequest) -> SMSPayload:
+def generate_sms_endpoint(request: GenerateSMSRequest) -> SMSPayload:
     """
     Generate a concise SMS follow-up message for a scored lead.
 
