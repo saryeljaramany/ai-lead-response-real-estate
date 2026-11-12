@@ -118,6 +118,8 @@ class TestLlmPromptGuardrails(unittest.TestCase):
             "following up",
             "arranging a viewing",
             "never invent prices",
+            "never call the person a",
+            "never mention their score",
         ]
         rule_lower = _HONESTY_RULE.lower()
         for clause in clauses:
@@ -149,6 +151,22 @@ class TestLlmPromptGuardrails(unittest.TestCase):
             if line.startswith("- ") and _HONESTY_RULE in line
         ]
         self.assertEqual(len(matching_lines), 1)
+
+    def test_email_prompt_excludes_ready_to_act(self):
+        """With environment cleared and score 87, email prompt excludes 'ready-to-act'."""
+        client = FakeClient(EMAIL_REPLY)
+        with patch.dict(os.environ, {}, clear=True):
+            with patch("services.llm_service._get_client", return_value=client):
+                generate_email(self.lead, self.score)
+
+        user_content = next(
+            msg["content"]
+            for msg in client.kwargs.get("messages", [])
+            if msg.get("role") == "user"
+        )
+
+        self.assertNotIn("ready-to-act", user_content.lower())
+        self.assertEqual(user_content.count(_HONESTY_RULE), 1)
 
     # -----------------------------------------------------------------------
     # C. SMS prompt contains honesty rule and retains existing guardrails
