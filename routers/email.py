@@ -12,12 +12,17 @@ OAuth flow overview:
     GET  /email/auth          → Step 1: generate a Google consent URL
     GET  /email/auth/callback → Step 2: exchange the code Google returns
     POST /email/send          → Step 3: send an email with stored credentials
+
+Endpoint functions are plain ``def`` (not ``async def``) because the Google
+client libraries make blocking I/O calls.  FastAPI automatically runs sync
+endpoint functions in a thread-pool executor so the event loop is never
+blocked.
 """
 
 from fastapi import APIRouter, HTTPException, Query
 
 from models import EmailPayload
-from services.gmail_service import exchange_code, get_auth_url, send_email
+from services.gmail_service import EmailSendError, exchange_code, get_auth_url, send_email
 
 router = APIRouter(
     prefix="/email",
@@ -30,7 +35,7 @@ router = APIRouter(
 # ===========================================================================
 
 @router.get("/auth", summary="Start Gmail OAuth 2.0 authorization")
-async def auth() -> dict:
+def auth() -> dict:
     """
     Generate a Google OAuth 2.0 authorization URL and return it to the caller.
 
@@ -81,7 +86,7 @@ async def auth() -> dict:
 # ===========================================================================
 
 @router.get("/auth/callback", summary="Complete Gmail OAuth 2.0 authorization")
-async def auth_callback(
+def auth_callback(
     code: str | None = Query(default=None),
     error: str | None = Query(default=None),
 ) -> dict:
@@ -160,7 +165,7 @@ async def auth_callback(
 # ===========================================================================
 
 @router.post("/send", summary="Send a follow-up email to a lead via Gmail")
-async def send_email_endpoint(payload: EmailPayload) -> dict:
+def send_email_endpoint(payload: EmailPayload) -> dict:
     """
     Send a personalised follow-up email to a lead using the authorized Gmail
     account and the credentials stored in token.json.
@@ -171,11 +176,10 @@ async def send_email_endpoint(payload: EmailPayload) -> dict:
     service layer will silently refresh it using the refresh token before
     dispatching the email.
 
-    ``RuntimeError`` messages from the service layer are forwarded verbatim as
-    HTTP 500 detail strings because they contain user-actionable instructions
-    (e.g. "token.json not found. Complete the OAuth flow first..."). Any other
-    unexpected exception is wrapped in a generic message to avoid leaking
-    internal details.
+    **Dry-run mode:** When GMAIL_DRY_RUN is not explicitly set to "false",
+    "0", "no", or "off", the service returns immediately without sending.
+    The response will contain ``"dry_run": true`` and ``"message_id": null``.
+    Set ``GMAIL_DRY_RUN=false`` to enable live sending.
 
     **Receives:**
         An ``EmailPayload`` JSON request body:
@@ -190,27 +194,32 @@ async def send_email_endpoint(payload: EmailPayload) -> dict:
 
     **Returns:**
         A dict with:
-        - ``message``: ``"Email sent successfully"``
-        - ``to``: recipient email address
-        - ``subject``: email subject line
-        - ``message_id``: Gmail API message ID for audit/tracking
+        - ``message``: ``"Email sent successfully"`` or a dry-run notice.
+        - ``to``: recipient email address.
+        - ``subject``: email subject line.
+        - ``message_id``: Gmail API message ID for audit/tracking, or
+          ``null`` when ``dry_run`` is true.
+        - ``dry_run``: ``true`` if the email was not actually sent.
 
     **Errors:**
         - ``422 Unprocessable Entity`` — ``EmailPayload`` validation failed
-          (FastAPI handles this automatically before the handler runs).
+          (FastAPI handles this automatically before the handler runs), **or**
+          Gmail rejected the message or its recipient address.  Not retryable.
         - ``500 Internal Server Error`` — token.json is missing or corrupt,
           the refresh token was revoked, GMAIL_SENDER_EMAIL is not set, or
-          the Gmail API call failed.
+          an unexpected error occurred.  Not retryable; fix the configuration.
+        - ``502 Bad Gateway`` — Gmail or the network failed transiently
+          (rate limit, server error, or timeout).  Retryable after back-off.
     """
     try:
-        result = send_email(payload)
-        return result
+        return send_email(payload)
+    except EmailSendError as exc:
+        status = {"recipient": 422, "transient": 502}.get(exc.category, 500)
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
     except RuntimeError as exc:
-        # RuntimeErrors from our service layer carry user-actionable text;
-        # forward them verbatim so the caller knows exactly what to fix.
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
+    except Exception:
         raise HTTPException(
             status_code=500,
             detail="Unexpected error while sending the email. Please try again.",
-        ) from exc
+        )
