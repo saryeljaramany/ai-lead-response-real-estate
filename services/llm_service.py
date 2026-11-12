@@ -119,6 +119,7 @@ _HONESTY_RULE = (
     "has already done or will personally do beyond following up, answering "
     "questions and arranging a viewing. Use only the details given above: never "
     "invent prices, addresses, availability or neighbourhood facts."
+    " Never call the person a 'lead' and never mention their score, category or priority."
 )
 
 
@@ -277,7 +278,7 @@ Email guidelines:
 - Reference their property type, preferred location, and budget naturally when provided
 - {booking_rule}
 - Do NOT use generic filler phrases like "I hope this email finds you well"
-- Tone: {"urgent and enthusiastic for a ready-to-act home lead" if score.category == "hot" else "helpful and professional for a home buyer, seller, or renter"}
+- Tone: {"urgent and enthusiastic" if score.category == "hot" else "helpful and professional for a home buyer, seller, or renter"}
 
 Respond ONLY with a valid JSON object — no markdown, no explanation:
 
