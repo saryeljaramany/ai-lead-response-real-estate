@@ -21,9 +21,10 @@ SDK COMPATIBILITY:
     message structure, response parsing — are identical.
 
 MODEL IN USE:
-    "nvidia/nemotron-3.5-lightning:free"
-    A free-tier model on OpenRouter that returns JSON reliably when
-    prompted explicitly.
+    The model identifier is read from OPENROUTER_MODEL in .env at call time.
+    When unset or blank, the free router "openrouter/free" is used (it picks
+    a random available free model, so output quality can vary; set
+    OPENROUTER_MODEL for consistent results).
 
 BOOKING LINKS (Phase 8):
     Booking links, recipient addresses, phone numbers and the SMS opt-out are
@@ -87,8 +88,29 @@ def _get_client() -> OpenAI:
     )
 
 
-# The free-tier model used for all three AI functions in this service.
-_MODEL = "nvidia/nemotron-3.5-lightning:free"
+def _get_model() -> str:
+    """
+    Return the OpenRouter model identifier to use, read at call time.
+
+    Reads OPENROUTER_MODEL from the environment inside the function so that
+    load_dotenv() in main.py has already run. If the variable is unset or
+    blank, returns _DEFAULT_MODEL. Otherwise returns the stripped value.
+    Never raises and never logs the value.
+
+    Returns:
+        The stripped model identifier string to pass to OpenRouter.
+
+    Raises:
+        None.
+    """
+    raw = os.getenv("OPENROUTER_MODEL")
+    if not raw or not raw.strip():
+        return _DEFAULT_MODEL
+    return raw.strip()
+
+
+# Fallback router that selects an available free model when OPENROUTER_MODEL is unset.
+_DEFAULT_MODEL = "openrouter/free"
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +176,7 @@ code fences. The JSON must have exactly these keys:
 }}"""
 
     response = client.chat.completions.create(
-        model=_MODEL,
+        model=_get_model(),
         messages=[
             {
                 "role": "system",
@@ -255,7 +277,7 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
 }}"""
 
     response = client.chat.completions.create(
-        model=_MODEL,
+        model=_get_model(),
         messages=[
             {
                 "role": "system",
@@ -367,7 +389,7 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
 }}"""
 
     response = client.chat.completions.create(
-        model=_MODEL,
+        model=_get_model(),
         messages=[
             {
                 "role": "system",
