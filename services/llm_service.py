@@ -112,6 +112,15 @@ def _get_model() -> str:
 # Fallback router that selects an available free model when OPENROUTER_MODEL is unset.
 _DEFAULT_MODEL = "openrouter/free"
 
+# Honesty rule shared by the email and SMS prompts.
+_HONESTY_RULE = (
+    "Do not claim that you have already found, selected, curated, shortlisted "
+    "or prepared any homes or listings, and do not describe anything the agent "
+    "has already done or will personally do beyond following up, answering "
+    "questions and arranging a viewing. Use only the details given above: never "
+    "invent prices, addresses, availability or neighbourhood facts."
+)
+
 
 # ---------------------------------------------------------------------------
 # FUNCTION 1 — score_lead
@@ -264,6 +273,7 @@ Email guidelines:
 - Address the lead by first name only
 - Be warm, professional, and concise (3–4 short paragraphs)
 - Tailor the reply to the lead's apparent buying, selling, or renting need
+- {_HONESTY_RULE}
 - Reference their property type, preferred location, and budget naturally when provided
 - {booking_rule}
 - Do NOT use generic filler phrases like "I hope this email finds you well"
@@ -377,6 +387,7 @@ SMS guidelines:
 - CRITICAL: The message MUST be {plan.text_budget} characters or fewer (including spaces)
 - Be warm, professional, and direct
 - Tailor the reply to the lead's apparent buying, selling, or renting need
+- {_HONESTY_RULE}
 - Mention that an agent will be in touch shortly
 - Do NOT include any URL and do NOT include an opt-out or STOP instruction: both are added automatically.
 - {booking_rule}
