@@ -123,7 +123,9 @@ def score_lead(lead: LeadInput) -> LeadScore:
 
     Sends a carefully engineered prompt to the AI model and parses the
     JSON response into a validated LeadScore object. A low temperature
-    (0.3) is used to keep scoring deterministic and consistent.
+    (0.3) is used to keep scoring deterministic and consistent. The lead's
+    email address and phone number are deliberately NOT sent to the
+    model: scoring does not need them.
 
     Args:
         lead: A validated LeadInput instance containing the raw lead data.
@@ -144,8 +146,6 @@ Analyse the following lead and return a structured quality score.
 
 Lead Details:
 - Name: {lead.name}
-- Email: {lead.email}
-- Phone: {lead.phone}
 - Property type: {lead.property_type or "Not provided"}
 - Preferred location: {lead.preferred_location or "Not provided"}
 - Budget: {lead.budget or "Not provided"}
