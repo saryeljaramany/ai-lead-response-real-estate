@@ -21,10 +21,9 @@ SDK COMPATIBILITY:
     message structure, response parsing — are identical.
 
 MODEL IN USE:
-    "mistralai/mistral-7b-instruct:free"
-    A free-tier instruction-tuned model on OpenRouter. It handles
-    structured JSON output reliably when prompted explicitly to
-    respond only with valid JSON.
+    "nvidia/nemotron-3.5-lightning:free"
+    A free-tier model on OpenRouter that returns JSON reliably when
+    prompted explicitly.
 
 BOOKING LINKS (Phase 8):
     Booking links, recipient addresses, phone numbers and the SMS opt-out are
@@ -89,7 +88,7 @@ def _get_client() -> OpenAI:
 
 
 # The free-tier model used for all three AI functions in this service.
-_MODEL = "mistralai/mistral-7b-instruct:free"
+_MODEL = "nvidia/nemotron-3.5-lightning:free"
 
 
 # ---------------------------------------------------------------------------
