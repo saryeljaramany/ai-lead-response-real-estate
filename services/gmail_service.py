@@ -10,9 +10,23 @@ This module handles the complete Gmail lifecycle:
     4. Automatic token refresh when credentials expire
     5. Email dispatch via the Gmail API
 
-All environment variables are read inside functions at call time — never at
-module level — to guarantee that load_dotenv() in main.py has already run
+All environment variables are read inside functions at call time - never at
+module level - to guarantee that load_dotenv() in main.py has already run
 before any value is accessed.
+
+Dry-run mode
+------------
+Set GMAIL_DRY_RUN to any value other than "false", "0", "no", or "off"
+(case-insensitive, stripped) and send_email() will return immediately without
+reading credentials, loading token.json, or touching the network. This is the
+default-safe mode: an unset, empty, or misspelled variable is treated as True
+so that accidental sends cannot occur unless the flag is explicitly disabled.
+
+Error categories (EmailSendError.category)
+------------------------------------------
+    "recipient"  - Gmail rejected the message or recipient address; do not retry.
+    "config"     - Authorization, scope, sender or server setup problem; do not retry.
+    "transient"  - Gmail or the network failed transiently; a retry is reasonable.
 """
 
 # ---------------------------------------------------------------------------
@@ -29,8 +43,12 @@ from email.mime.text import MIMEText
 import google.auth.exceptions
 import google.auth.transport.requests
 import google.oauth2.credentials
+import google_auth_httplib2
+import httplib2
+from google.auth.exceptions import RefreshError, TransportError
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
 from models import EmailPayload
 
@@ -47,6 +65,28 @@ TOKEN_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "token.json",
 )
+
+# Hard timeout (seconds) for every Gmail HTTP call.
+_REQUEST_TIMEOUT_SECONDS = 10
+
+
+# ---------------------------------------------------------------------------
+# Typed error
+# ---------------------------------------------------------------------------
+
+class EmailSendError(RuntimeError):
+    """
+    Raised by send_email() when the Gmail API call cannot be completed.
+
+    Attributes:
+        category: One of "recipient", "config", or "transient".  The router
+                  uses this to choose the appropriate HTTP status code and to
+                  decide whether the caller should retry.
+    """
+
+    def __init__(self, message: str, *, category: str) -> None:
+        super().__init__(message)
+        self.category = category
 
 
 # ---------------------------------------------------------------------------
@@ -68,14 +108,102 @@ def _require_env(name: str) -> str:
         The stripped, non-empty value of the variable.
 
     Raises:
-        RuntimeError: If the variable is unset, empty, or whitespace-only.
+        EmailSendError(category="config"): If the variable is unset, empty,
+            or whitespace-only.
     """
     value = os.getenv(name, "").strip()
     if not value:
-        raise RuntimeError(
-            f"{name} is missing or empty. Set it in .env and restart the server."
+        raise EmailSendError(
+            f"{name} is missing or empty. Set it in .env and restart the server.",
+            category="config",
         )
     return value
+
+
+def _is_dry_run() -> bool:
+    """
+    Return True unless GMAIL_DRY_RUN is explicitly set to a falsy value.
+
+    Reads GMAIL_DRY_RUN at call time (never cached).  Returns False ONLY when
+    the stripped, lower-cased value is one of: "false", "0", "no", "off".
+    Any other value - including unset, empty, or a typo - returns True, so
+    that accidental live sends cannot occur without an explicit opt-in.
+
+    Returns:
+        bool: True if dry-run mode is active, False for live mode.
+    """
+    raw = os.getenv("GMAIL_DRY_RUN", "").strip().lower()
+    return raw not in {"false", "0", "no", "off"}
+
+
+def _classify_http_error(exc: HttpError) -> EmailSendError:
+    """
+    Convert a googleapiclient HttpError into a typed EmailSendError.
+
+    Maps HTTP status codes (and, for 403, specific reason strings) to the
+    appropriate error category.  Error messages never contain the recipient
+    address, subject, body, or any text from Gmail's response body.
+
+    Parameters:
+        exc: The HttpError raised by the Gmail API client.
+
+    Returns:
+        An EmailSendError with an appropriate category and message.
+    """
+    status = int(exc.resp.status)
+
+    # Try to extract reason strings from the JSON error body.
+    reasons: list[str] = []
+    try:
+        body = json.loads(exc.content)
+        for entry in body.get("error", {}).get("errors", []):
+            reason = entry.get("reason", "")
+            if reason:
+                reasons.append(reason)
+    except Exception:  # noqa: BLE001 - tolerate any parse failure
+        pass
+
+    if status == 400:
+        return EmailSendError(
+            "Gmail rejected the message or its recipient address (400).",
+            category="recipient",
+        )
+    if status == 401:
+        return EmailSendError(
+            "Gmail authorization failed (401). Re-run GET /email/auth.",
+            category="config",
+        )
+    if status == 403:
+        rate_limit_reasons = {"rateLimitExceeded", "userRateLimitExceeded"}
+        if rate_limit_reasons.intersection(reasons):
+            return EmailSendError(
+                "Gmail rate limit reached (403). Retry later.",
+                category="transient",
+            )
+        return EmailSendError(
+            "Gmail denied access (403). Check the OAuth scope, "
+            "the sender account and its sending quota.",
+            category="config",
+        )
+    if status == 404:
+        return EmailSendError(
+            "Gmail endpoint or sender account not found (404).",
+            category="config",
+        )
+    if status == 429:
+        return EmailSendError(
+            "Gmail rate limit reached (429). Retry later.",
+            category="transient",
+        )
+    if status >= 500:
+        return EmailSendError(
+            "Gmail is temporarily unavailable. Retry later.",
+            category="transient",
+        )
+    return EmailSendError(
+        f"Gmail rejected the request (HTTP {status}).",
+        category="config",
+    )
 
 
 def _build_flow() -> Flow:
@@ -89,7 +217,7 @@ def _build_flow() -> Flow:
     PKCE is explicitly disabled (autogenerate_code_verifier=False) because
     this is a confidential web client that authenticates with a client secret,
     and because the authorization and token-exchange requests arrive in
-    separate HTTP requests — a per-Flow PKCE verifier would be lost between
+    separate HTTP requests - a per-Flow PKCE verifier would be lost between
     them, causing Google to reject the exchange with "invalid_grant: Missing
     code verifier".
 
@@ -154,7 +282,7 @@ def _save_credentials(credentials: google.oauth2.credentials.Credentials) -> Non
     for easy manual inspection during development.
 
     Expiry format: google-auth keeps credentials.expiry as a naive datetime
-    in UTC. We write it as an ISO 8601 string with a trailing "Z" — the same
+    in UTC. We write it as an ISO 8601 string with a trailing "Z" - the same
     convention used by google-auth's own Credentials.to_json().
 
     Parameters:
@@ -197,15 +325,16 @@ def _load_credentials() -> google.oauth2.credentials.Credentials:
         with the Gmail API.
 
     Raises:
-        RuntimeError: If token.json does not exist, contains invalid JSON,
-                      or the refresh attempt fails (e.g. the user revoked
-                      access).
+        EmailSendError(category="config"): If token.json does not exist,
+            contains invalid JSON, or the refresh attempt fails (e.g. the
+            user revoked access).
     """
     # --- 1. Existence check ---
     if not os.path.exists(TOKEN_PATH):
-        raise RuntimeError(
+        raise EmailSendError(
             "token.json not found. Complete the OAuth flow first by visiting "
-            "GET /email/auth"
+            "GET /email/auth",
+            category="config",
         )
 
     # --- 2. Parse ---
@@ -213,9 +342,10 @@ def _load_credentials() -> google.oauth2.credentials.Credentials:
         with open(TOKEN_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, ValueError) as exc:
-        raise RuntimeError(
+        raise EmailSendError(
             "token.json contains invalid JSON. Delete the file and re-run "
-            "GET /email/auth to generate a fresh token."
+            "GET /email/auth to generate a fresh token.",
+            category="config",
         ) from exc
 
     # --- 3. Expiry reconstruction ---
@@ -244,9 +374,10 @@ def _load_credentials() -> google.oauth2.credentials.Credentials:
         try:
             credentials.refresh(google.auth.transport.requests.Request())
         except google.auth.exceptions.RefreshError as exc:
-            raise RuntimeError(
+            raise EmailSendError(
                 "Gmail authorization expired or was revoked. Re-run "
-                "GET /email/auth."
+                "GET /email/auth.",
+                category="config",
             ) from exc
         _save_credentials(credentials)
 
@@ -266,7 +397,7 @@ def get_auth_url() -> str:
     application's callback endpoint with an authorization code.
 
     The authorization is requested with ``access_type="offline"`` and
-    ``prompt="consent"`` so that Google always issues a refresh token —
+    ``prompt="consent"`` so that Google always issues a refresh token -
     even if the user has previously granted access.
 
     Returns:
@@ -309,7 +440,7 @@ def exchange_code(code: str) -> None:
         _save_credentials(flow.credentials)
     except RuntimeError:
         # Re-raise our own RuntimeErrors (from _require_env / _build_flow)
-        # unchanged — they already carry user-actionable text.
+        # unchanged - they already carry user-actionable text.
         raise
     except Exception as exc:
         raise RuntimeError(
@@ -321,41 +452,80 @@ def send_email(payload: EmailPayload) -> dict:
     """
     Send an email via the Gmail API using a previously authorized account.
 
-    Workflow:
-        1. Validate that GMAIL_SENDER_EMAIL is configured.
-        2. Load (and, if necessary, refresh) OAuth credentials from token.json.
-        3. Build the email as a MIMEMultipart message.
-        4. Base64url-encode the message bytes and dispatch via the Gmail API.
-        5. Return a confirmation dict with the recipient, subject, and
-           Gmail message ID.
+    Dry-run mode
+    ------------
+    If GMAIL_DRY_RUN is not explicitly set to "false", "0", "no", or "off"
+    (case-insensitive), the function returns immediately without reading any
+    other environment variable, loading token.json, or touching the network.
+    The returned dict includes ``"dry_run": True`` and ``"message_id": None``.
+    Set ``GMAIL_DRY_RUN=false`` to enable live sending.
+
+    Live mode workflow
+    ------------------
+    1. Validate that GMAIL_SENDER_EMAIL is configured.
+    2. Load (and, if necessary, refresh) OAuth credentials from token.json.
+    3. Build an AuthorizedHttp transport with a hard timeout of
+       _REQUEST_TIMEOUT_SECONDS seconds for every Gmail HTTP call.
+    4. Build the email as a MIMEMultipart message.
+    5. Base64url-encode the message bytes and dispatch via the Gmail API.
+    6. Return a confirmation dict with the recipient, subject, Gmail message
+       ID, and ``"dry_run": False``.
 
     Parameters:
         payload: An EmailPayload instance containing to_email, to_name,
                  subject, body, lead_score, and an optional calendly_link.
 
     Returns:
-        A dict with keys: "message", "to", "subject", "message_id".
+        A dict with keys: "message", "to", "subject", "message_id",
+        "dry_run".
 
     Raises:
-        RuntimeError: If GMAIL_SENDER_EMAIL is missing, token.json is absent
-                      or corrupt, the refresh token is revoked, or the Gmail
-                      API call fails for any other reason.
+        EmailSendError(category="recipient"): Gmail rejected the message or
+            its recipient address (HTTP 400).  Do not retry.
+        EmailSendError(category="config"): Authorization, scope, sender or
+            server setup problem (HTTP 401, 403 non-rate-limit, 404, or an
+            unexpected exception type).  Do not retry; fix the configuration.
+        EmailSendError(category="transient"): Gmail or the network failed
+            transiently (HTTP 429, 5xx, network timeout, or OS error).  A
+            retry after a back-off delay is reasonable.
     """
-    # 1. Validate sender — do this first, before touching token.json.
-    sender = _require_env("GMAIL_SENDER_EMAIL")
+    # Normalise the subject to a single line (RFC 2822 forbids bare newlines
+    # in structured header fields).
+    subject = " ".join(payload.subject.split())
 
+    # --- Dry-run short-circuit ---
+    if _is_dry_run():
+        return {
+            "message": (
+                "DRY RUN: email prepared; nothing was sent. "
+                "Set GMAIL_DRY_RUN=false to send real email."
+            ),
+            "to": payload.to_email,
+            "subject": subject,
+            "message_id": None,
+            "dry_run": True,
+        }
+
+    # --- Live send ---
     try:
+        # 1. Validate sender - before touching token.json.
+        sender = _require_env("GMAIL_SENDER_EMAIL")
+
         # 2. Load credentials (auto-refreshes if expired).
         credentials = _load_credentials()
 
-        # 3. Build the Gmail API service.
-        service = build("gmail", "v1", credentials=credentials)
+        # 3. Build the Gmail API service with an explicit HTTP timeout.
+        http = google_auth_httplib2.AuthorizedHttp(
+            credentials,
+            http=httplib2.Http(timeout=_REQUEST_TIMEOUT_SECONDS),
+        )
+        service = build("gmail", "v1", http=http)
 
         # 4. Compose the MIME message.
         message = MIMEMultipart()
         message["To"] = payload.to_email
         message["From"] = sender
-        message["Subject"] = payload.subject
+        message["Subject"] = subject
         message.attach(MIMEText(payload.body, "plain", "utf-8"))
 
         # 5. Encode and send.
@@ -371,14 +541,27 @@ def send_email(payload: EmailPayload) -> dict:
         return {
             "message": "Email sent successfully",
             "to": payload.to_email,
-            "subject": payload.subject,
+            "subject": subject,
             "message_id": response.get("id"),
+            "dry_run": False,
         }
 
-    except RuntimeError:
-        # Our own helpers already wrap errors with user-actionable text.
+    except EmailSendError:
         raise
+    except HttpError as exc:
+        raise _classify_http_error(exc) from exc
+    except RefreshError as exc:
+        raise EmailSendError(
+            "Gmail authorization expired or was revoked. Re-run GET /email/auth.",
+            category="config",
+        ) from exc
+    except (TransportError, httplib2.HttpLib2Error, OSError) as exc:
+        raise EmailSendError(
+            "Could not reach Gmail (network error or timeout).",
+            category="transient",
+        ) from exc
     except Exception as exc:
-        raise RuntimeError(
-            f"Failed to send email to {payload.to_email}: {exc}"
+        raise EmailSendError(
+            f"Unexpected error while calling Gmail: {type(exc).__name__}.",
+            category="config",
         ) from exc
