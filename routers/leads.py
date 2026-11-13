@@ -1,9 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, model_validator
 
-from models import LeadRecord
+from models import LeadInput, LeadRecord
+from services.pipeline_service import process_lead
 from services.supabase_service import LeadStoreError, get_lead, store_lead, update_flags
 
 # Note: This file will be expanded with CRUD operations and lead-specific logic in later phases.
@@ -136,6 +137,148 @@ def store_lead_endpoint(record: LeadRecord) -> StoreLeadResponse:
             detail="Unexpected error while storing the lead.",
         ) from exc
     return StoreLeadResponse(created=created, record=stored)
+
+
+# ---------------------------------------------------------------------------
+# PIPELINE ENDPOINT MODELS
+# ---------------------------------------------------------------------------
+
+class ProcessLeadRequest(BaseModel):
+    """Request body for POST /leads/process."""
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+                "lead": {
+                    "name": "Sarah Mitchell",
+                    "email": "sarah.mitchell@example.com",
+                    "phone": "+1-415-555-0192",
+                    "message": (
+                        "My partner and I are looking for a three-bedroom home near "
+                        "good schools and would like to move before summer."
+                    ),
+                    "property_type": "house",
+                    "preferred_location": "Austin, TX",
+                    "budget": "$450k-$550k",
+                    "timeline": "within 3 months",
+                },
+            }
+        }
+    }
+
+    id: UUID | None = None
+    lead: LeadInput
+
+
+class StepErrorModel(BaseModel):
+    """Safe error details reported for a failed pipeline step."""
+
+    category: str
+    message: str
+
+
+class StepReportModel(BaseModel):
+    """API representation of one pipeline step outcome."""
+
+    name: str
+    status: str
+    reason: str
+    retryable: bool
+    external_id: str | None
+    flag_recorded: bool | None
+    duration_ms: int
+    error: StepErrorModel | None
+
+
+class RetryAdviceModel(BaseModel):
+    """Retry guidance derived from retryable failed pipeline steps."""
+
+    recommended: bool
+    steps: list[str]
+
+
+class RepairActionModel(BaseModel):
+    """A safe manual repair action for a sent-but-unflagged provider action."""
+
+    action: str
+    body: dict[str, bool]
+
+
+class ProcessLeadResponse(BaseModel):
+    """Complete, per-step report returned by POST /leads/process."""
+
+    lead_id: str
+    status: str
+    persisted: bool
+    created: bool | None
+    idempotency_key_generated: bool
+    category: str | None
+    score: int | None
+    steps: list[StepReportModel]
+    retry: RetryAdviceModel
+    repair: list[RepairActionModel]
+    failed_step: str | None
+    retryable: bool
+
+
+@router.post(
+    "/process",
+    response_model=ProcessLeadResponse,
+    responses={
+        200: {
+            "description": (
+                "Lead persisted with a completed or partial pipeline report; "
+                "inspect steps, retry, and repair."
+            )
+        },
+        422: {"description": "Validation error (invalid request body or id)"},
+        500: {"description": "Non-retryable pipeline failure"},
+        502: {
+            "description": (
+                "Retryable score or storage failure; resend the same request."
+            )
+        },
+    },
+)
+def process_lead_endpoint(
+    request: ProcessLeadRequest,
+    response: Response,
+) -> ProcessLeadResponse:
+    """Process, persist, and safely dispatch one lead through the pipeline.
+
+    HTTP semantics:
+        200 -- the lead was persisted and the pipeline is completed or partial;
+        read ``steps``, ``retry``, and ``repair`` for individual outcomes.
+        502 -- scoring or storage failed with a retryable error; resend the
+        same request.
+        500 -- a non-retryable pipeline failure occurred.
+        422 -- the request body or id is invalid.
+
+    The optional ``id`` is the idempotency key. Send the SAME id on every
+    retry. If omitted, one is generated and returned; retrying without it
+    creates a new lead. Dry-run steps are reported as skipped and never mark
+    flags. Cold leads are persisted but receive no email, SMS, or CRM sync.
+    A step whose reason is ``flag_update_failed`` needs the PATCH action in
+    ``repair``, not a pipeline retry, because retrying would resend the
+    external message.
+    """
+    try:
+        result = process_lead(
+            request.lead,
+            lead_id=str(request.id) if request.id else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="Unexpected error while processing the lead.",
+        ) from exc
+
+    if result.status == "failed":
+        response.status_code = 502 if result.retry_steps else 500
+    return ProcessLeadResponse(**result.to_dict())
 
 
 @router.get(
