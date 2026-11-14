@@ -364,6 +364,15 @@ def _classify_error(exc: Exception) -> SMSSendError:
                 "TWILIO_PHONE_NUMBER is invalid, not owned by this Twilio "
                 "account, or not SMS-capable."
             ),
+            572006: (
+                "Trial accounts can only send predefined SMS templates. Upgrade the "
+                "Twilio account to send custom message bodies."
+            ),
+            21608: (
+                "The destination number is not a verified Caller ID. Trial accounts can "
+                "only send SMS to verified numbers; add it under Phone Numbers > "
+                "Verified Caller IDs, or upgrade the account."
+            ),
         }
 
         if code in recipient_messages:
