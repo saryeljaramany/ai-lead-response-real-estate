@@ -1052,5 +1052,59 @@ class TestMDockerFiles(unittest.TestCase):
         )
 
 
+class TestNFixes(unittest.TestCase):
+    """Verify the four targeted code fixes applied to lead_pipeline.json."""
+
+    def test_n01_fail_execution_error_message(self):
+        n = node_by_name("Fail Execution (keep data)")
+        msg = n.get("parameters", {}).get("errorMessage", "")
+        self.assertIn(
+            "$('Route Decision')", msg,
+            "errorMessage must reference $('Route Decision') not $json"
+        )
+        self.assertNotIn(
+            "$json.id", msg,
+            "errorMessage must not use $json.id (undefined in this node's context)"
+        )
+        self.assertNotIn(
+            "$json.reason", msg,
+            "errorMessage must not use $json.reason (undefined in this node's context)"
+        )
+
+    def test_n02_slack_alert_http_422_and_index_of(self):
+        code = jscode("Build Slack Alert")
+        self.assertIn(
+            "http_422", code,
+            "Build Slack Alert must handle http_422 reason"
+        )
+        self.assertIn(
+            "indexOf('http_')", code,
+            "Build Slack Alert must use indexOf to detect http_ prefix"
+        )
+        self.assertIn(
+            "repair_failed", code,
+            "Build Slack Alert must still reference repair_failed"
+        )
+
+    def test_n03_slack_success_flag_repair_label(self):
+        code = jscode("Build Slack Success")
+        self.assertIn(
+            "sent (flag repaired)", code,
+            "Build Slack Success must label flag_update_failed steps as sent (flag repaired)"
+        )
+        self.assertIn(
+            "flag_update_failed", code,
+            "Build Slack Success must check for flag_update_failed reason"
+        )
+        self.assertIn(
+            "&amp;", code,
+            "Build Slack Success must HTML-escape output"
+        )
+        self.assertIn(
+            "DRY RUN", code,
+            "Build Slack Success must retain DRY RUN label"
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
