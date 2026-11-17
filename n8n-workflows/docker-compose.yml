@@ -18,6 +18,8 @@ services:
       - N8N_EDITOR_BASE_URL=http://localhost:5678
       - WEBHOOK_URL=http://localhost:5678/
       - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
       - EXECUTIONS_DATA_MAX_AGE=168          # hours: failed executions keep lead data 7 days
       - BACKEND_BASE_URL=${BACKEND_BASE_URL:-http://host.docker.internal:8000}
       - SLACK_LEADS_WEBHOOK_URL=${SLACK_LEADS_WEBHOOK_URL:-}
