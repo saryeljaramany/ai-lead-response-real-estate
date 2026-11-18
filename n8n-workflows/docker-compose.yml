@@ -1,0 +1,32 @@
+name: lead-n8n
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_IMAGE_TAG:-latest}
+    container_name: n8n-leads
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5678:5678"          # localhost only; never expose the editor
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # automatic on Docker Desktop; needed on Linux
+    environment:
+      - TZ=${TZ:-UTC}
+      - GENERIC_TIMEZONE=${TZ:-UTC}
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false   # required so $env works in n8n 2.x
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_EDITOR_BASE_URL=http://localhost:5678
+      - WEBHOOK_URL=http://localhost:5678/
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+      - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+      - EXECUTIONS_DATA_MAX_AGE=168          # hours: failed executions keep lead data 7 days
+      - BACKEND_BASE_URL=${BACKEND_BASE_URL:-http://host.docker.internal:8000}
+      - SLACK_LEADS_WEBHOOK_URL=${SLACK_LEADS_WEBHOOK_URL:-}
+      - SLACK_ALERTS_WEBHOOK_URL=${SLACK_ALERTS_WEBHOOK_URL:-}
+      - WEBHOOK_SHARED_SECRET=${WEBHOOK_SHARED_SECRET:-}
+    volumes:
+      - n8n_data:/home/node/.n8n           # named volume (not a Windows bind mount)
+
+volumes:
+  n8n_data:

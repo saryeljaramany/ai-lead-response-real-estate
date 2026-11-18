@@ -1,0 +1,584 @@
+{
+  "name": "Lead Pipeline (Phase 10)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "lead-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "a1000001-0001-4001-8001-000000000001",
+      "name": "Lead Webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "try {\n  const req = $input.first().json || {};\n  const body = (req.body && typeof req.body === 'object') ? req.body : {};\n  const headers = req.headers || {};\n  const secret = String($env.WEBHOOK_SHARED_SECRET || '').trim();\n  if (secret && String(headers['x-webhook-secret'] || '') !== secret) {\n    return [{ json: { ok: false, httpStatus: 401, responseBody: { error: 'unauthorized' } } }];\n  }\n  const clean = (v) => {\n    if (typeof v === 'string') return v.trim();\n    if (typeof v === 'number' && Number.isFinite(v)) return String(v);\n    return '';\n  };\n  const LIMITS = { name: 200, email: 254, phone: 50, message: 5000, property_type: 200, preferred_location: 200, budget: 200, timeline: 200 };\n  const REQUIRED = ['name', 'email', 'phone', 'message'];\n  const OPTIONAL = ['property_type', 'preferred_location', 'budget', 'timeline'];\n  const lead = {};\n  const missing = [];\n  for (const k of REQUIRED) {\n    const v = clean(body[k]);\n    if (v) { lead[k] = v.slice(0, LIMITS[k]); } else { missing.push(k); }\n  }\n  for (const k of OPTIONAL) {\n    const v = clean(body[k]);\n    if (v) { lead[k] = v.slice(0, LIMITS[k]); }\n  }\n  if (missing.length) {\n    return [{ json: { ok: false, httpStatus: 400, responseBody: { error: 'invalid_lead', missing } } }];\n  }\n  return [{ json: { ok: true, lead } }];\n} catch (e) {\n  return [{ json: { ok: false, httpStatus: 500, responseBody: { error: 'workflow_error' } } }];\n}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        300,
+        0
+      ],
+      "id": "a1000001-0002-4001-8001-000000000002",
+      "name": "Validate Lead"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.ok === true ? 0 : 1 }}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        600,
+        0
+      ],
+      "id": "a1000001-0003-4001-8001-000000000003",
+      "name": "Route: Valid?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.responseBody }}",
+        "options": {
+          "responseCode": "={{ $json.httpStatus }}"
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        900,
+        200
+      ],
+      "id": "a1000001-0004-4001-8001-000000000004",
+      "name": "Respond Invalid"
+    },
+    {
+      "parameters": {
+        "jsCode": "const uuid = () => {\n  if (typeof crypto !== 'undefined' && crypto && typeof crypto.randomUUID === 'function') {\n    return crypto.randomUUID();\n  }\n  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {\n    const r = (Math.random() * 16) | 0;\n    return (c === 'x' ? r : ((r & 0x3) | 0x8)).toString(16);\n  });\n};\nconst lead = $input.first().json.lead;\nreturn [{ json: { id: uuid(), lead, attempt: 1, maxAttempts: 3 } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        0
+      ],
+      "id": "a1000001-0005-4001-8001-000000000005",
+      "name": "Init State"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { accepted: true, id: $json.id } }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "a1000001-0006-4001-8001-000000000006",
+      "name": "Respond 202"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const s = $input.item.json;\nreturn { json: { id: s.id, lead: s.lead, attempt: s.attempt, maxAttempts: s.maxAttempts } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        0
+      ],
+      "id": "a1000001-0007-4001-8001-000000000007",
+      "name": "Prepare Attempt"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ String($env.BACKEND_BASE_URL || '').replace(/\\/+$/, '') }}/leads/process",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ id: $json.id, lead: $json.lead }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 300000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1800,
+        0
+      ],
+      "id": "a1000001-0008-4001-8001-000000000008",
+      "name": "Call Pipeline",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const state = $('Prepare Attempt').item.json;\nconst r = $input.item.json || {};\nconst statusCode = Number.isInteger(r.statusCode) ? r.statusCode : null;\nlet body = r.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\nif (!body || typeof body !== 'object') { body = null; }\n\nconst networkError = statusCode === null;\nconst hasReport = body !== null && typeof body.status === 'string' && Array.isArray(body.steps);\nconst retryObj = (hasReport && body.retry && typeof body.retry === 'object') ? body.retry : {};\nconst retryRecommended = hasReport && retryObj.recommended === true;\nconst retrySteps = Array.isArray(retryObj.steps) ? retryObj.steps.map(String) : [];\nconst repairs = (hasReport && Array.isArray(body.repair)) ? body.repair : [];\nconst steps = hasReport ? body.steps.filter((x) => x && typeof x === 'object') : [];\nconst failedSteps = steps.filter((x) => x.status === 'failed').map((x) => ({\n  name: String(x.name || '?'),\n  reason: String(x.reason || '?'),\n  category: (x.error && x.error.category) ? String(x.error.category) : String(x.reason || '?'),\n  retryable: x.retryable === true,\n  message: (x.error && x.error.message) ? String(x.error.message).slice(0, 200) : '',\n}));\nconst stepSummary = steps.map((x) => ({ name: String(x.name || '?'), status: String(x.status || '?'), reason: String(x.reason || '?') }));\nconst dryRun = steps.some((x) => x.reason === 'dry_run');\nconst category = (hasReport && typeof body.category === 'string') ? body.category : null;\nconst score = (hasReport && Number.isInteger(body.score)) ? body.score : null;\nconst pipelineStatus = hasReport ? body.status : null;\nconst canRetry = state.attempt < state.maxAttempts;\n\nlet decision;\nlet reason;\nif (networkError) {\n  decision = canRetry ? 'retry' : 'terminal_failure';\n  reason = canRetry ? 'network_error' : 'retries_exhausted';\n} else if (!hasReport) {\n  const transientHttp = [429, 502, 503, 504].includes(statusCode);\n  decision = (transientHttp && canRetry) ? 'retry' : 'terminal_failure';\n  reason = transientHttp ? (canRetry ? 'upstream_unavailable' : 'retries_exhausted') : ('http_' + statusCode);\n} else if (repairs.length > 0) {\n  decision = 'repair';\n  reason = 'flag_repair_needed';\n} else if (retryRecommended && canRetry) {\n  decision = 'retry';\n  reason = 'retryable_steps';\n} else if (pipelineStatus === 'completed') {\n  decision = ['hot', 'warm'].includes(category) ? 'notify_success' : 'quiet_success';\n  reason = 'completed';\n} else {\n  decision = 'terminal_failure';\n  reason = (retryRecommended && !canRetry) ? 'retries_exhausted' : (pipelineStatus === 'failed' ? 'pipeline_failed' : 'partial_not_retryable');\n}\n\nreturn { json: {\n  id: state.id, lead: state.lead, attempt: state.attempt, maxAttempts: state.maxAttempts,\n  httpStatus: statusCode, networkError, hasReport, pipelineStatus, category, score,\n  retryRecommended, retrySteps, repairs, failedSteps, steps: stepSummary, dryRun, canRetry,\n  decision, reason,\n} };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2100,
+        0
+      ],
+      "id": "a1000001-0009-4001-8001-000000000009",
+      "name": "Evaluate Response"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 5,
+        "output": "={{ ['repair','retry','notify_success','quiet_success','terminal_failure'].indexOf($json.decision) }}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        2400,
+        0
+      ],
+      "id": "a1000001-0010-4001-8001-000000000010",
+      "name": "Route Decision"
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $input.first().json;\nconst FLAGS = ['email_sent', 'sms_sent', 'hubspot_created'];\nconst expectedAction = 'PATCH /leads/' + s.id + '/flags';\nconst out = [];\nfor (const r of (s.repairs || [])) {\n  const raw = (r && r.body && typeof r.body === 'object') ? r.body : {};\n  const patchBody = {};\n  for (const f of FLAGS) { if (raw[f] === true) { patchBody[f] = true; } }\n  const valid = !!r && r.action === expectedAction && Object.keys(patchBody).length > 0;\n  out.push({ json: { state: s, patchUrlPath: '/leads/' + s.id + '/flags', patchBody: valid ? patchBody : {} } });\n}\nif (out.length === 0) {\n  out.push({ json: { state: s, patchUrlPath: '/leads/' + s.id + '/flags', patchBody: {} } });\n}\nreturn out;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        -200
+      ],
+      "id": "a1000001-0011-4001-8001-000000000011",
+      "name": "Build Repairs"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ String($env.BACKEND_BASE_URL || '').replace(/\\/+$/, '') }}{{ $json.patchUrlPath }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.patchBody) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3000,
+        -200
+      ],
+      "id": "a1000001-0012-4001-8001-000000000012",
+      "name": "Apply Repair",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const state = $('Build Repairs').first().json.state;\nconst results = $input.all().map((i) => i.json || {});\nconst okAll = results.length > 0 && results.every((x) => Number.isInteger(x.statusCode) && x.statusCode >= 200 && x.statusCode < 300);\nconst remaining = (state.failedSteps || []).filter((f) => f.reason !== 'flag_update_failed');\nlet decision;\nlet reason;\nif (!okAll) {\n  decision = 'terminal_failure';\n  reason = 'repair_failed';\n} else if (remaining.length === 0) {\n  decision = ['hot', 'warm'].includes(state.category) ? 'notify_success' : 'quiet_success';\n  reason = 'repaired';\n} else if (state.retryRecommended && state.canRetry) {\n  decision = 'retry';\n  reason = 'retryable_steps_after_repair';\n} else {\n  decision = 'terminal_failure';\n  reason = state.retryRecommended ? 'retries_exhausted' : 'partial_not_retryable';\n}\nreturn [{ json: Object.assign({}, state, { decision, reason, repairedOk: okAll }) }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        -200
+      ],
+      "id": "a1000001-0013-4001-8001-000000000013",
+      "name": "After Repair"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const s = $input.item.json;\nconst base = s.networkError ? 120 : 60;\nconst waitSeconds = base * Math.pow(2, Math.max(0, s.attempt - 1));\nreturn { json: { id: s.id, lead: s.lead, attempt: s.attempt + 1, maxAttempts: s.maxAttempts, waitSeconds } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        -100
+      ],
+      "id": "a1000001-0014-4001-8001-000000000014",
+      "name": "Compute Backoff"
+    },
+    {
+      "parameters": {
+        "amount": "={{ $json.waitSeconds }}",
+        "unit": "seconds"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3000,
+        -100
+      ],
+      "id": "a1000001-0015-4001-8001-000000000015",
+      "name": "Wait Before Retry"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const s = $input.item.json;\nconst esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst l = s.lead || {};\nconst pick = (label, v) => (v ? label + ': ' + esc(String(v).slice(0, 80)) : null);\nconst attrs = [pick('Property', l.property_type), pick('Location', l.preferred_location), pick('Budget', l.budget), pick('Timeline', l.timeline)].filter(Boolean).join(' | ');\nconst icon = s.category === 'hot' ? ':fire:' : ':sunny:';\nconst outbound = (s.steps || []).filter((x) => ['email', 'sms', 'crm'].includes(x.name)).map((x) => x.name + ': ' + (x.reason === 'flag_update_failed' ? 'sent (flag repaired)' : esc(x.reason))).join(' | ');\nconst lines = [\n  icon + ' *' + esc(String(s.category).toUpperCase()) + ' lead* - score ' + esc(s.score) + (s.dryRun ? ' _[DRY RUN: nothing was sent]_' : '') + (s.reason === 'repaired' ? ' _(flag repaired automatically)_' : ''),\n  attrs || '_no property details provided_',\n  'Steps: ' + outbound,\n  'Lead ID: ' + esc(s.id),\n];\nreturn { json: { slackPayload: { text: lines.join('\\n') } } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        100
+      ],
+      "id": "a1000001-0016-4001-8001-000000000016",
+      "name": "Build Slack Success"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_LEADS_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.slackPayload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3000,
+        100
+      ],
+      "id": "a1000001-0017-4001-8001-000000000017",
+      "name": "Slack: Lead Summary",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const s = $input.item.json;\nconst esc = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst reasons = {\n  repair_failed: 'Automatic flag repair failed. A message was already sent, so do NOT re-run the pipeline; patch the flags manually.',\n  retries_exhausted: 'Retries exhausted. Re-sending the same request (same id) is safe.',\n  partial_not_retryable: 'A step failed with a non-retryable error. Fix the cause, then re-send the same request (same id).',\n  pipeline_failed: 'The pipeline failed before the lead was stored.',\n  http_422: 'The backend rejected the lead as invalid (HTTP 422). Check the submitted lead data; re-sending it unchanged will fail again.',\n};\nconst failed = (s.failedSteps || []).map((f) => '- ' + esc(f.name) + ': ' + esc(f.category) + (f.retryable ? ' (retryable)' : '') + (f.message ? ' - ' + esc(f.message) : ''));\nconst fixes = (s.reason === 'repair_failed' ? (s.repairs || []) : []).map((r) => '  PATCH /leads/' + esc(s.id) + '/flags ' + esc(JSON.stringify((r && r.body) ? r.body : {})));\nconst base = String($env.N8N_EDITOR_BASE_URL || '').replace(/\\/+$/, '');\nconst link = base ? (base + '/workflow/' + $workflow.id + '/executions/' + $execution.id) : '';\nconst lines = [\n  ':rotating_light: *Lead pipeline needs attention*',\n  'Lead ID: ' + esc(s.id) + ' | Attempt ' + s.attempt + '/' + s.maxAttempts + ' | HTTP ' + ((s.httpStatus === null || s.httpStatus === undefined) ? 'no response' : s.httpStatus),\n  'Reason: ' + esc(reasons[s.reason] || (String(s.reason).indexOf('http_') === 0 ? ('The backend returned HTTP ' + String(s.reason).slice(5) + ' without a pipeline report. Check the backend logs.') : s.reason)),\n];\nif (failed.length) { lines.push('Failed steps:\\n' + failed.join('\\n')); }\nif (fixes.length) { lines.push('Manual fix:\\n' + fixes.join('\\n')); }\nif (link) { lines.push('n8n execution: ' + link); }\nreturn { json: { slackPayload: { text: lines.join('\\n') } } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2700,
+        300
+      ],
+      "id": "a1000001-0018-4001-8001-000000000018",
+      "name": "Build Slack Alert"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_ALERTS_WEBHOOK_URL }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.slackPayload) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        3000,
+        300
+      ],
+      "id": "a1000001-0019-4001-8001-000000000019",
+      "name": "Slack: Error Alert",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "errorMessage": "={{ 'Lead pipeline failed. id=' + $('Route Decision').first().json.id + ' reason=' + $('Route Decision').first().json.reason }}"
+      },
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        3300,
+        300
+      ],
+      "id": "a1000001-0020-4001-8001-000000000020",
+      "name": "Fail Execution (keep data)"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2700,
+        200
+      ],
+      "id": "a1000001-0021-4001-8001-000000000021",
+      "name": "Cold Lead: No Alert"
+    }
+  ],
+  "connections": {
+    "Lead Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Lead",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Lead": {
+      "main": [
+        [
+          {
+            "node": "Route: Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Valid?": {
+      "main": [
+        [
+          {
+            "node": "Init State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Init State": {
+      "main": [
+        [
+          {
+            "node": "Respond 202",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond 202": {
+      "main": [
+        [
+          {
+            "node": "Prepare Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Attempt": {
+      "main": [
+        [
+          {
+            "node": "Call Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Response": {
+      "main": [
+        [
+          {
+            "node": "Route Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Decision": {
+      "main": [
+        [
+          {
+            "node": "Build Repairs",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Compute Backoff",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Slack Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cold Lead: No Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Slack Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Repairs": {
+      "main": [
+        [
+          {
+            "node": "Apply Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Repair": {
+      "main": [
+        [
+          {
+            "node": "After Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "After Repair": {
+      "main": [
+        [
+          {
+            "node": "Route Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Backoff": {
+      "main": [
+        [
+          {
+            "node": "Wait Before Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait Before Retry": {
+      "main": [
+        [
+          {
+            "node": "Prepare Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Success": {
+      "main": [
+        [
+          {
+            "node": "Slack: Lead Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Slack Alert": {
+      "main": [
+        [
+          {
+            "node": "Slack: Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack: Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Fail Execution (keep data)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 1800,
+    "saveDataSuccessExecution": "none",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "timezone": "UTC"
+  },
+  "active": false
+}
