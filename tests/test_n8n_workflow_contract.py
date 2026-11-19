@@ -1104,6 +1104,22 @@ class TestNFixes(unittest.TestCase):
             "DRY RUN", code,
             "Build Slack Success must retain DRY RUN label"
         )
+        self.assertIn(
+            "some steps not sent", code,
+            "Build Slack Success must contain 'some steps not sent' (mixed-mode dry-run marker)"
+        )
+        self.assertIn(
+            "nothing was sent", code,
+            "Build Slack Success must contain 'nothing was sent' (all-dry-run marker)"
+        )
+        self.assertIn(
+            "dryCount", code,
+            "Build Slack Success must compute dryCount per-step rather than reading s.dryRun"
+        )
+        self.assertNotIn(
+            "s.dryRun", code,
+            "Build Slack Success must NOT read s.dryRun (replaced by per-step dryCount logic)"
+        )
 
 
 if __name__ == "__main__":
