@@ -23,6 +23,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from models import EmailPayload
 from services.gmail_service import EmailSendError, exchange_code, get_auth_url, send_email
+from services.security import SecurityConfigError, make_oauth_state, verify_oauth_state
 
 router = APIRouter(
     prefix="/email",
@@ -39,6 +40,8 @@ def auth() -> dict:
     """
     Generate a Google OAuth 2.0 authorization URL and return it to the caller.
 
+    Requires X-API-Key.
+
     This is Step 1 of the Gmail authorization flow. The developer (or an
     automated process) must open the returned URL in a browser, sign in with
     the Google account that owns the Gmail inbox, and approve the requested
@@ -50,7 +53,7 @@ def auth() -> dict:
     via GET /email/auth/callback to obtain and persist OAuth tokens.
 
     **Receives:**
-        Nothing — no request body or query parameters.
+        Nothing — no request body or query parameters. Requires X-API-Key.
 
     **Returns:**
         A JSON object with:
@@ -58,12 +61,14 @@ def auth() -> dict:
         - ``auth_url``: the full Google consent URL to open in a browser.
 
     **Errors:**
-        - ``500 Internal Server Error`` — a required environment variable
+        - ``500 Internal Server Error`` — API_SECRET_KEY is missing or invalid,
+          a required environment variable
           (GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, or GMAIL_REDIRECT_URI)
           is missing, or an unexpected error occurred in the service layer.
     """
     try:
-        url = get_auth_url()
+        state = make_oauth_state()
+        url = get_auth_url(state)
         return {
             "message": (
                 "Open the auth_url in a browser, sign in with the Gmail account "
@@ -72,6 +77,8 @@ def auth() -> dict:
             ),
             "auth_url": url,
         }
+    except SecurityConfigError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:
@@ -89,6 +96,7 @@ def auth() -> dict:
 def auth_callback(
     code: str | None = Query(default=None),
     error: str | None = Query(default=None),
+    state: str | None = Query(default=None),
 ) -> dict:
     """
     Receive Google's OAuth 2.0 callback and exchange the authorization code
@@ -100,7 +108,7 @@ def auth_callback(
 
     Both ``code`` and ``error`` are declared optional because Google's
     redirect behaviour differs by outcome:
-    - **Approved**: Google redirects with ``?code=<auth_code>`` and no error.
+    - **Approved**: Google redirects with ``?code=<auth_code>&state=<state>`` and no error.
     - **Denied**: Google redirects with ``?error=access_denied`` and no code.
     If ``code`` were declared as a required ``str``, FastAPI would return a
     ``422`` before this handler runs whenever consent is denied, and the
@@ -111,18 +119,19 @@ def auth_callback(
     ``except Exception`` clause.
 
     **Receives:**
-        Query parameters (both optional, populated by Google's redirect):
+        Query parameters (optional, populated by Google's redirect):
         - ``code``  — authorization code to exchange for tokens.
         - ``error`` — denial reason string (e.g. ``access_denied``).
+        - ``state`` — OAuth state token to protect against CSRF.
 
     **Returns:**
         On success:
         ``{"message": "Authorization successful. You can now send emails via POST /email/send"}``
 
     **Errors:**
-        - ``400 Bad Request`` — the user denied consent (``error`` is present)
-          or the request arrived without a ``code`` and without an ``error``
-          (e.g. direct navigation to this URL).
+        - ``400 Bad Request`` — the user denied consent (``error`` is present),
+          the request arrived without a ``code``, or the ``state`` is invalid
+          or expired.
         - ``500 Internal Server Error`` — the code exchange failed (expired,
           already used, or environment misconfiguration), or an unexpected
           error occurred.
@@ -138,6 +147,14 @@ def auth_callback(
             status_code=400,
             detail=(
                 "Missing 'code' query parameter. "
+                "Start again at GET /email/auth."
+            ),
+        )
+    if not verify_oauth_state(state):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Invalid or expired OAuth state. "
                 "Start again at GET /email/auth."
             ),
         )

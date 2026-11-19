@@ -23,6 +23,7 @@ import json
 import os
 from pathlib import Path
 import ssl
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -406,6 +407,93 @@ class TestGmailService(unittest.TestCase):
 
                         if expected_text:
                             self.assertIn(expected_text, error_str)
+
+    # -----------------------------------------------------------------------
+    # H. Token path and OAuth state handling
+    # -----------------------------------------------------------------------
+
+    def test_token_path_default_and_env_override(self) -> None:
+        """_token_path returns TOKEN_PATH by default and respects GMAIL_TOKEN_PATH override."""
+        import services.gmail_service as gs
+
+        # Default (unset)
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(gs._token_path(), gs.TOKEN_PATH)
+
+        # Blank or whitespace
+        with patch.dict(os.environ, {"GMAIL_TOKEN_PATH": "   "}, clear=True):
+            self.assertEqual(gs._token_path(), gs.TOKEN_PATH)
+
+        # Patched module constant
+        with patch.dict(os.environ, {}, clear=True):
+            with patch.object(gs, "TOKEN_PATH", "/patched/token.json"):
+                self.assertEqual(gs._token_path(), "/patched/token.json")
+
+        # Explicit non-blank override
+        custom_path = "/var/secrets/gmail_token.json"
+        with patch.dict(os.environ, {"GMAIL_TOKEN_PATH": custom_path}, clear=True):
+            self.assertEqual(gs._token_path(), custom_path)
+
+    def test_save_and_load_credentials_round_trip_via_gmail_token_path(self) -> None:
+        """Save and load credentials round trip through temporary directory using GMAIL_TOKEN_PATH."""
+        import google.oauth2.credentials
+        import services.gmail_service as gs
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            temp_token_path = os.path.join(tmpdir, "custom_token.json")
+            with patch.dict(os.environ, {"GMAIL_TOKEN_PATH": temp_token_path}, clear=True):
+                orig_creds = google.oauth2.credentials.Credentials(
+                    token="sample_access_token_123",
+                    refresh_token="sample_refresh_token_456",
+                    token_uri="https://oauth2.googleapis.com/token",
+                    client_id="sample_client_id.apps.googleusercontent.com",
+                    client_secret="sample_client_secret",
+                    scopes=["https://www.googleapis.com/auth/gmail.send"],
+                )
+
+                gs._save_credentials(orig_creds)
+                self.assertTrue(os.path.exists(temp_token_path))
+
+                loaded_creds = gs._load_credentials()
+                self.assertEqual(loaded_creds.token, "sample_access_token_123")
+                self.assertEqual(loaded_creds.refresh_token, "sample_refresh_token_456")
+                self.assertEqual(
+                    loaded_creds.client_id,
+                    "sample_client_id.apps.googleusercontent.com",
+                )
+                self.assertEqual(loaded_creds.client_secret, "sample_client_secret")
+                self.assertEqual(
+                    list(loaded_creds.scopes),
+                    ["https://www.googleapis.com/auth/gmail.send"],
+                )
+
+    def test_get_auth_url_state_parameter_handling(self) -> None:
+        """get_auth_url hands state to Flow when provided and works without state."""
+        import services.gmail_service as gs
+
+        with patch("services.gmail_service._build_flow") as mock_build_flow:
+            mock_flow = MagicMock()
+            mock_build_flow.return_value = mock_flow
+            mock_flow.authorization_url.return_value = ("https://auth.example.com", "state_echo")
+
+            # 1. With state
+            test_state = "mock_oauth_state_string_xyz"
+            url_with_state = gs.get_auth_url(state=test_state)
+            self.assertEqual(url_with_state, "https://auth.example.com")
+            mock_flow.authorization_url.assert_called_once_with(
+                access_type="offline",
+                prompt="consent",
+                state=test_state,
+            )
+
+            # 2. Without state
+            mock_flow.authorization_url.reset_mock()
+            url_no_state = gs.get_auth_url()
+            self.assertEqual(url_no_state, "https://auth.example.com")
+            mock_flow.authorization_url.assert_called_once_with(
+                access_type="offline",
+                prompt="consent",
+            )
 
 
 if __name__ == "__main__":
