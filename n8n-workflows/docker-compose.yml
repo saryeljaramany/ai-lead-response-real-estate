@@ -22,6 +22,7 @@ services:
       - EXECUTIONS_DATA_SAVE_ON_ERROR=all
       - EXECUTIONS_DATA_MAX_AGE=168          # hours: failed executions keep lead data 7 days
       - BACKEND_BASE_URL=${BACKEND_BASE_URL:-http://host.docker.internal:8000}
+      - BACKEND_API_KEY=${BACKEND_API_KEY:-}
       - SLACK_LEADS_WEBHOOK_URL=${SLACK_LEADS_WEBHOOK_URL:-}
       - SLACK_ALERTS_WEBHOOK_URL=${SLACK_ALERTS_WEBHOOK_URL:-}
       - WEBHOOK_SHARED_SECRET=${WEBHOOK_SHARED_SECRET:-}
