@@ -1,0 +1,14 @@
+.git
+venv/
+**/__pycache__/
+**/*.pyc
+.env
+.env.*
+token.json
+credentials.json
+data/
+deploy/*.env
+n8n-workflows/.env.n8n
+n8n-workflows/_schema_reference.json
+docs/
+.DS_Store

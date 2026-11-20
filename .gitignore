@@ -11,3 +11,5 @@ docs/
 
 n8n-workflows/.env.n8n
 n8n-workflows/_schema_reference.json
+deploy/*.env
+data/
