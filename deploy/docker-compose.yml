@@ -1,0 +1,107 @@
+name: lead-system
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  caddy:
+    build:
+      context: ./caddy
+    image: lead-caddy:local
+    container_name: lead-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    env_file:
+      - caddy.env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - lead_net
+    depends_on:
+      backend:
+        condition: service_healthy
+      n8n:
+        condition: service_started
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  backend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      target: runtime
+    image: lead-backend:local
+    container_name: lead-backend
+    restart: unless-stopped
+    env_file:
+      - backend.env
+    environment:
+      - GMAIL_TOKEN_PATH=/data/token.json
+      - HOME=/tmp
+    volumes:
+      - ../data/backend:/data          # token.json lives on the host; directory owner must be uid 10001
+    expose:
+      - "8000"                         # internal only: never published to the host
+    networks:
+      - lead_net
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.47.7
+    container_name: lead-n8n
+    restart: unless-stopped
+    env_file:
+      - n8n.env
+    environment:
+      - TZ=UTC
+      - GENERIC_TIMEZONE=UTC
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_PROXY_HOPS=1
+      - N8N_EDITOR_BASE_URL=http://localhost:5678
+      - BACKEND_BASE_URL=http://backend:8000
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - N8N_CONCURRENCY_PRODUCTION_LIMIT=3
+    ports:
+      - "127.0.0.1:5678:5678"          # editor: loopback only, reach it through an SSH tunnel
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - lead_net
+    depends_on:
+      backend:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+    logging: *logging
+
+networks:
+  lead_net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  n8n_data:

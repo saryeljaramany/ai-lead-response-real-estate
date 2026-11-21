@@ -274,6 +274,21 @@ def _to_naive_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+def _token_path() -> str:
+    """
+    Return the path to token.json, respecting GMAIL_TOKEN_PATH override.
+
+    Reads GMAIL_TOKEN_PATH from the environment at call time. If set and
+    non-blank, returns its stripped value. Otherwise returns the module
+    constant TOKEN_PATH (looked up at call time).
+
+    Returns:
+        str: Absolute or relative file path to the token JSON storage.
+    """
+    override = os.getenv("GMAIL_TOKEN_PATH", "").strip()
+    return override if override else TOKEN_PATH
+
+
 def _save_credentials(credentials: google.oauth2.credentials.Credentials) -> None:
     """
     Persist OAuth 2.0 credentials to token.json in the project root.
@@ -305,7 +320,7 @@ def _save_credentials(credentials: google.oauth2.credentials.Credentials) -> Non
         "expiry": expiry_str,
     }
 
-    with open(TOKEN_PATH, "w", encoding="utf-8") as f:
+    with open(_token_path(), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
 
 
@@ -329,8 +344,9 @@ def _load_credentials() -> google.oauth2.credentials.Credentials:
             contains invalid JSON, or the refresh attempt fails (e.g. the
             user revoked access).
     """
+    token_file = _token_path()
     # --- 1. Existence check ---
-    if not os.path.exists(TOKEN_PATH):
+    if not os.path.exists(token_file):
         raise EmailSendError(
             "token.json not found. Complete the OAuth flow first by visiting "
             "GET /email/auth",
@@ -339,7 +355,7 @@ def _load_credentials() -> google.oauth2.credentials.Credentials:
 
     # --- 2. Parse ---
     try:
-        with open(TOKEN_PATH, "r", encoding="utf-8") as f:
+        with open(token_file, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, ValueError) as exc:
         raise EmailSendError(
@@ -388,7 +404,7 @@ def _load_credentials() -> google.oauth2.credentials.Credentials:
 # Public Functions
 # ---------------------------------------------------------------------------
 
-def get_auth_url() -> str:
+def get_auth_url(state: str | None = None) -> str:
     """
     Generate the Google OAuth 2.0 authorization URL.
 
@@ -400,6 +416,10 @@ def get_auth_url() -> str:
     ``prompt="consent"`` so that Google always issues a refresh token -
     even if the user has previously granted access.
 
+    Parameters:
+        state: Optional OAuth 2.0 state token to protect against CSRF.
+               Passed to flow.authorization_url only when not None.
+
     Returns:
         The full authorization URL as a string.
 
@@ -409,10 +429,13 @@ def get_auth_url() -> str:
                       GMAIL_REDIRECT_URI) is missing.
     """
     flow = _build_flow()
-    auth_url, _ = flow.authorization_url(
-        access_type="offline",
-        prompt="consent",
-    )
+    kwargs: dict[str, str] = {
+        "access_type": "offline",
+        "prompt": "consent",
+    }
+    if state is not None:
+        kwargs["state"] = state
+    auth_url, _ = flow.authorization_url(**kwargs)
     return auth_url
 
 

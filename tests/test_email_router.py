@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 
 import routers.email as email_router
 from services.gmail_service import EmailSendError
+from services.security import SecurityConfigError
 
 
 def _build_test_client() -> TestClient:
@@ -143,6 +144,67 @@ class TestEmailRouter(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("Missing 'code'", response.json().get("detail", ""))
             mock_exchange.assert_not_called()
+
+    # -----------------------------------------------------------------------
+    # 6. OAuth state generation and validation in email router
+    # -----------------------------------------------------------------------
+
+    def test_auth_generates_state_and_calls_get_auth_url(self) -> None:
+        """GET /email/auth creates OAuth state and passes it to get_auth_url."""
+        mock_state = "mocked_oauth_state_payload_123"
+        expected_url = "https://accounts.google.com/o/oauth2/auth?state=" + mock_state
+
+        with patch("routers.email.make_oauth_state", return_value=mock_state) as mock_make_state, \
+             patch("routers.email.get_auth_url", return_value=expected_url) as mock_get_url:
+            response = self.client.get("/email/auth")
+            self.assertEqual(response.status_code, 200)
+            mock_make_state.assert_called_once()
+            mock_get_url.assert_called_once_with(mock_state)
+            self.assertEqual(response.json().get("auth_url"), expected_url)
+
+    def test_auth_security_config_error_returns_500(self) -> None:
+        """GET /email/auth maps SecurityConfigError to HTTP 500 with its message."""
+        err_msg = "API_SECRET_KEY is missing or shorter than 24 characters."
+        with patch("routers.email.make_oauth_state", side_effect=SecurityConfigError(err_msg)):
+            response = self.client.get("/email/auth")
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(response.json().get("detail"), err_msg)
+
+    def test_callback_missing_or_invalid_state_returns_400_without_calling_exchange(self) -> None:
+        """GET /email/auth/callback with code but missing/invalid state returns 400 without exchanging."""
+        with patch("routers.email.exchange_code") as mock_exchange:
+            # Code present, missing state
+            with patch("routers.email.verify_oauth_state", return_value=False) as mock_verify:
+                resp_no_state = self.client.get("/email/auth/callback?code=valid_code_123")
+                self.assertEqual(resp_no_state.status_code, 400)
+                self.assertIn("Invalid or expired OAuth state", resp_no_state.json().get("detail", ""))
+                mock_verify.assert_called_once_with(None)
+                mock_exchange.assert_not_called()
+
+            # Code present, invalid state
+            mock_exchange.reset_mock()
+            with patch("routers.email.verify_oauth_state", return_value=False) as mock_verify:
+                resp_bad_state = self.client.get(
+                    "/email/auth/callback?code=valid_code_123&state=bad.state.token"
+                )
+                self.assertEqual(resp_bad_state.status_code, 400)
+                self.assertIn("Invalid or expired OAuth state", resp_bad_state.json().get("detail", ""))
+                mock_verify.assert_called_once_with("bad.state.token")
+                mock_exchange.assert_not_called()
+
+    def test_callback_valid_state_exchanges_code_returns_200(self) -> None:
+        """GET /email/auth/callback with code and valid state exchanges code and returns 200."""
+        valid_state = "valid.oauth.state.token"
+        with patch("routers.email.verify_oauth_state", return_value=True) as mock_verify, \
+             patch("routers.email.exchange_code") as mock_exchange:
+            mock_exchange.return_value = None
+            response = self.client.get(
+                f"/email/auth/callback?code=google_auth_code_xyz&state={valid_state}"
+            )
+            self.assertEqual(response.status_code, 200)
+            mock_verify.assert_called_once_with(valid_state)
+            mock_exchange.assert_called_once_with("google_auth_code_xyz")
+            self.assertIn("Authorization successful", response.json().get("message", ""))
 
 
 if __name__ == "__main__":

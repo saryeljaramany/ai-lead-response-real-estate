@@ -1,0 +1,86 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+}
+
+{$APP_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# Named matchers (declared at site level)
+	@intake path /webhook/lead-intake
+	@health path /health
+	@oauth path /email/auth /email/auth/callback
+	@not_post not method POST
+	@not_get not method GET
+
+	# 1) Public lead intake -> n8n. Nothing else of n8n is reachable from the internet.
+	handle @intake {
+		route {
+			respond @not_post "Method Not Allowed" 405
+			request_body {
+				max_size 32KB
+			}
+			rate_limit {
+				zone intake_per_ip {
+					key    {remote_host}
+					events {$INTAKE_PER_IP_PER_MIN:5}
+					window 1m
+				}
+				zone intake_global_hour {
+					key    static
+					events {$INTAKE_GLOBAL_PER_HOUR:30}
+					window 1h
+				}
+				zone intake_global_day {
+					key    static
+					events {$INTAKE_GLOBAL_PER_DAY:200}
+					window 24h
+				}
+			}
+			reverse_proxy n8n:5678
+		}
+	}
+
+	# 2) Uptime checks -> backend (GET only)
+	handle @health {
+		route {
+			respond @not_get "Method Not Allowed" 405
+			rate_limit {
+				zone health_per_ip {
+					key    {remote_host}
+					events 30
+					window 1m
+				}
+			}
+			reverse_proxy backend:8000
+		}
+	}
+
+	# 3) Gmail OAuth: /email/auth needs the API key and the callback needs a signed
+	#    state. Both are enforced by the backend, not here.
+	handle @oauth {
+		route {
+			respond @not_get "Method Not Allowed" 405
+			rate_limit {
+				zone oauth_per_ip {
+					key    {remote_host}
+					events 10
+					window 1m
+				}
+			}
+			reverse_proxy backend:8000
+		}
+	}
+
+	# 4) Everything else is closed.
+	handle {
+		respond "Not Found" 404
+	}
+}

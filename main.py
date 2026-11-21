@@ -1,11 +1,12 @@
 # =============================================================================
 # Imports
 # =============================================================================
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from dotenv import load_dotenv
 import os
 
 from routers import leads, ai, email, sms, crm
+from services.security import require_api_key
 
 # =============================================================================
 # Environment Configuration
@@ -26,6 +27,7 @@ app = FastAPI(
     title=APP_TITLE,
     version=APP_VERSION,
     description=APP_DESCRIPTION,
+    dependencies=[Depends(require_api_key)],
 )
 
 # =============================================================================

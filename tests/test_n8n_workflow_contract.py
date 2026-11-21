@@ -463,6 +463,13 @@ class TestDCallPipeline(unittest.TestCase):
         self.assertIsNot(retry, True,
                          "retryOnFail must not be true (retries are handled by the workflow)")
 
+    def test_d10_api_key_header(self):
+        self.assertIs(self.params.get("sendHeaders"), True)
+        headers = self.params.get("headerParameters", {}).get("parameters", [])
+        self.assertEqual(len(headers), 1)
+        self.assertEqual(headers[0].get("name"), "X-API-Key")
+        self.assertEqual(headers[0].get("value"), "={{ $env.BACKEND_API_KEY }}")
+
 
 # ===========================================================================
 # E. Apply Repair HTTP node
@@ -501,6 +508,13 @@ class TestEApplyRepair(unittest.TestCase):
     def test_e07_on_error_continue_regular(self):
         self.assertEqual(self.node.get("onError"), "continueRegularOutput")
 
+    def test_e08_api_key_header(self):
+        self.assertIs(self.params.get("sendHeaders"), True)
+        headers = self.params.get("headerParameters", {}).get("parameters", [])
+        self.assertEqual(len(headers), 1)
+        self.assertEqual(headers[0].get("name"), "X-API-Key")
+        self.assertEqual(headers[0].get("value"), "={{ $env.BACKEND_API_KEY }}")
+
 
 # ===========================================================================
 # F. Slack nodes
@@ -534,6 +548,16 @@ class TestFSlackNodes(unittest.TestCase):
     def test_f06_alerts_on_error_continue(self):
         node, _, _ = self._resp("Slack: Error Alert")
         self.assertEqual(node.get("onError"), "continueRegularOutput")
+
+    def test_f07_no_api_key_header(self):
+        for name in ("Slack: Lead Summary", "Slack: Error Alert"):
+            node, params, _ = self._resp(name)
+            self.assertFalse(params.get("sendHeaders", False), f"{name!r} must not have sendHeaders enabled")
+            headers = params.get("headerParameters", {}).get("parameters", [])
+            self.assertFalse(
+                any(h.get("name") == "X-API-Key" for h in headers),
+                f"{name!r} must not have X-API-Key header",
+            )
 
 
 # ===========================================================================
@@ -700,7 +724,7 @@ class TestHConnections(unittest.TestCase):
 # I. Sanitisation (whole file text)
 # ===========================================================================
 _ALLOWED_ENV_NAMES = {
-    "BACKEND_BASE_URL", "SLACK_LEADS_WEBHOOK_URL", "SLACK_ALERTS_WEBHOOK_URL",
+    "BACKEND_BASE_URL", "BACKEND_API_KEY", "SLACK_LEADS_WEBHOOK_URL", "SLACK_ALERTS_WEBHOOK_URL",
     "WEBHOOK_SHARED_SECRET", "N8N_EDITOR_BASE_URL",
 }
 
@@ -854,6 +878,12 @@ class TestJCodeLogicMarkers(unittest.TestCase):
 
     def test_j22_slack_alert_repair_failed(self):
         self._has("Build Slack Alert", "repair_failed")
+
+    def test_j23_slack_alert_http_401(self):
+        self._has("Build Slack Alert", "http_401")
+
+    def test_j24_slack_alert_http_503(self):
+        self._has("Build Slack Alert", "http_503")
 
 
 # ===========================================================================
@@ -1051,6 +1081,20 @@ class TestMDockerFiles(unittest.TestCase):
             ".gitignore must contain '_schema_reference.json'"
         )
 
+    def test_m13_compose_backend_api_key(self):
+        self.assertIn(
+            "BACKEND_API_KEY" + "=", _RAW_COMPOSE,
+            "docker-compose.yml must contain BACKEND_API_KEY variable"
+        )
+
+    def test_m14_env_example_backend_api_key_empty(self):
+        m = re.search(r"^" + "BACKEND_API_KEY" + r"=(.*)$", _RAW_ENV_EXAMPLE, re.MULTILINE)
+        self.assertIsNotNone(m, ".env.n8n.example must define BACKEND_API_KEY")
+        self.assertEqual(
+            m.group(1).strip(), "",
+            f"BACKEND_API_KEY must be empty in .env.n8n.example, got {m.group(1)!r}"
+        )
+
 
 class TestNFixes(unittest.TestCase):
     """Verify the four targeted code fixes applied to lead_pipeline.json."""
@@ -1103,6 +1147,95 @@ class TestNFixes(unittest.TestCase):
         self.assertIn(
             "DRY RUN", code,
             "Build Slack Success must retain DRY RUN label"
+        )
+        self.assertIn(
+            "some steps not sent", code,
+            "Build Slack Success must contain 'some steps not sent' (mixed-mode dry-run marker)"
+        )
+        self.assertIn(
+            "nothing was sent", code,
+            "Build Slack Success must contain 'nothing was sent' (all-dry-run marker)"
+        )
+        self.assertIn(
+            "dryCount", code,
+            "Build Slack Success must compute dryCount per-step rather than reading s.dryRun"
+        )
+        self.assertNotIn(
+            "s.dryRun", code,
+            "Build Slack Success must NOT read s.dryRun (replaced by per-step dryCount logic)"
+        )
+
+
+class TestOApiKeyContract(unittest.TestCase):
+    """Verify backend API key contract across nodes, compose, and env example."""
+
+    def test_o01_exactly_call_pipeline_and_apply_repair_carry_header(self):
+        nodes_with_header = []
+        for n in _NODES:
+            params = n.get("parameters", {})
+            if params.get("sendHeaders") is True:
+                headers = params.get("headerParameters", {}).get("parameters", [])
+                for h in headers:
+                    if (
+                        h.get("name") == "X-API-Key"
+                        and h.get("value") == "={{ $env.BACKEND_API_KEY }}"
+                    ):
+                        nodes_with_header.append(n.get("name"))
+        self.assertEqual(
+            sorted(nodes_with_header),
+            sorted(["Call Pipeline", "Apply Repair"]),
+            "Exactly 'Call Pipeline' and 'Apply Repair' must carry the X-API-Key header",
+        )
+
+    def test_o02_no_other_node_mentions_backend_api_key(self):
+        for n in _NODES:
+            name = n.get("name")
+            if name not in {"Call Pipeline", "Apply Repair"}:
+                self.assertNotIn(
+                    "$env.BACKEND_API_KEY",
+                    json.dumps(n),
+                    f"Node {name!r} must not reference $env.BACKEND_API_KEY",
+                )
+            if name not in {"Call Pipeline", "Apply Repair", "Build Slack Alert"}:
+                self.assertNotIn(
+                    "BACKEND_API_KEY",
+                    json.dumps(n),
+                    f"Node {name!r} must not mention BACKEND_API_KEY",
+                )
+
+    def test_o03_slack_nodes_have_no_such_header(self):
+        for name in ("Slack: Lead Summary", "Slack: Error Alert"):
+            node = node_by_name(name)
+            params = node.get("parameters", {})
+            self.assertFalse(
+                params.get("sendHeaders", False),
+                f"{name!r} must not have sendHeaders enabled",
+            )
+            headers = params.get("headerParameters", {}).get("parameters", [])
+            self.assertFalse(
+                any(h.get("name") == "X-API-Key" for h in headers),
+                f"{name!r} must not carry an X-API-Key header",
+            )
+
+    def test_o04_build_slack_alert_contains_http_401_and_http_503(self):
+        code = jscode("Build Slack Alert")
+        self.assertIn("http_401", code, "Build Slack Alert must contain 'http_401'")
+        self.assertIn("http_503", code, "Build Slack Alert must contain 'http_503'")
+
+    def test_o05_compose_file_contains_backend_api_key(self):
+        self.assertIn(
+            "BACKEND_API_KEY" + "=",
+            _RAW_COMPOSE,
+            "docker-compose.yml must contain 'BACKEND_API_KEY' variable",
+        )
+
+    def test_o06_env_example_defines_backend_api_key_empty(self):
+        m = re.search(r"^" + "BACKEND_API_KEY" + r"=(.*)$", _RAW_ENV_EXAMPLE, re.MULTILINE)
+        self.assertIsNotNone(m, ".env.n8n.example must define BACKEND_API_KEY")
+        self.assertEqual(
+            m.group(1).strip(),
+            "",
+            f"BACKEND_API_KEY must be empty in .env.n8n.example, got {m.group(1)!r}",
         )
 
 
