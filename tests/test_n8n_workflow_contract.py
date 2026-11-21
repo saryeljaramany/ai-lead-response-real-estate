@@ -826,7 +826,22 @@ class TestJCodeLogicMarkers(unittest.TestCase):
         self._has("Evaluate Response", "networkError")
 
     def test_j09_evaluate_transient_http_codes(self):
-        self._has("Evaluate Response", "429, 502, 503, 504")
+        code = jscode("Evaluate Response")
+        self.assertIn(
+            "[429, 502, 504]",
+            code,
+            "Evaluate Response must contain '[429, 502, 504]'",
+        )
+        self.assertNotIn(
+            "503, 504",
+            code,
+            "Evaluate Response must not contain '503, 504'",
+        )
+        self.assertNotIn(
+            "[429, 502, 503, 504]",
+            code,
+            "Evaluate Response must not contain '[429, 502, 503, 504]'",
+        )
 
     def test_j10_evaluate_repair_before_retry(self):
         code = jscode("Evaluate Response")
@@ -1237,6 +1252,129 @@ class TestOApiKeyContract(unittest.TestCase):
             "",
             f"BACKEND_API_KEY must be empty in .env.n8n.example, got {m.group(1)!r}",
         )
+
+
+# ===========================================================================
+# P. Evaluate Response behaviour (executes node code via node CLI)
+# ===========================================================================
+@unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found")
+class TestEvaluateResponseBehaviour(unittest.TestCase):
+    """Executes Evaluate Response jsCode in node to verify branching behavior."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js_code = jscode("Evaluate Response")
+
+    def _eval(self, status_code=None, body=None, attempt=1, max_attempts=3):
+        input_item = {}
+        if status_code is not None:
+            input_item["statusCode"] = status_code
+        if body is not None:
+            input_item["body"] = body
+
+        state = {
+            "id": "i",
+            "lead": {},
+            "attempt": attempt,
+            "maxAttempts": max_attempts,
+        }
+
+        script = (
+            f"const $input = {{ item: {{ json: {json.dumps(input_item)} }} }};\n"
+            f"const $ = (name) => ({{ item: {{ json: {json.dumps(state)} }} }});\n"
+            f"const res = (function() {{\n{self.js_code}\n}})();\n"
+            f"console.log(JSON.stringify({{ decision: res.json.decision, reason: res.json.reason }}));\n"
+        )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            out = json.loads(res.stdout.strip())
+            return out["decision"], out["reason"]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_p01_status_503_no_body(self):
+        decision, reason = self._eval(status_code=503, body=None)
+        self.assertEqual(decision, "terminal_failure")
+        self.assertEqual(reason, "http_503")
+
+    def test_p02_status_401_no_body(self):
+        decision, reason = self._eval(status_code=401, body=None)
+        self.assertEqual(decision, "terminal_failure")
+        self.assertEqual(reason, "http_401")
+
+    def test_p03_status_502_no_body_attempt_1(self):
+        decision, reason = self._eval(status_code=502, body=None, attempt=1)
+        self.assertEqual(decision, "retry")
+        self.assertEqual(reason, "upstream_unavailable")
+
+    def test_p04_status_502_no_body_attempt_3(self):
+        decision, reason = self._eval(status_code=502, body=None, attempt=3)
+        self.assertEqual(decision, "terminal_failure")
+        self.assertEqual(reason, "retries_exhausted")
+
+    def test_p05_network_error_attempt_1(self):
+        decision, reason = self._eval(status_code=None, body=None, attempt=1)
+        self.assertEqual(decision, "retry")
+        self.assertEqual(reason, "network_error")
+
+    def test_p06_completed_report_hot(self):
+        body = {
+            "status": "completed",
+            "steps": [],
+            "category": "hot",
+            "score": 90,
+            "retry": {"recommended": False, "steps": []},
+            "repair": [],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "notify_success")
+        self.assertEqual(reason, "completed")
+
+    def test_p07_completed_report_cold(self):
+        body = {
+            "status": "completed",
+            "steps": [],
+            "category": "cold",
+            "score": 20,
+            "retry": {"recommended": False, "steps": []},
+            "repair": [],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "quiet_success")
+        self.assertEqual(reason, "completed")
+
+    def test_p08_partial_report_retry_recommended_attempt_1(self):
+        body = {
+            "status": "partial",
+            "steps": [],
+            "retry": {"recommended": True, "steps": ["sms"]},
+            "repair": [],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "retry")
+        self.assertEqual(reason, "retryable_steps")
+
+    def test_p09_completed_report_repair_items_attempt_1(self):
+        body = {
+            "status": "completed",
+            "steps": [],
+            "retry": {"recommended": False, "steps": []},
+            "repair": [{"action": "PATCH /leads/i/flags", "body": {"email_sent": True}}],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "repair")
+        self.assertEqual(reason, "flag_repair_needed")
 
 
 if __name__ == "__main__":
