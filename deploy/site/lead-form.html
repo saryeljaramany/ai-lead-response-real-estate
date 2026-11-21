@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Request a property viewing</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.5;
+      color: #333;
+      background-color: #f7f9fa;
+      margin: 0;
+      padding: 1rem;
+    }
+    .form-container {
+      max-width: 36rem;
+      margin: 2rem auto;
+      background: #ffffff;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    h1 {
+      margin-top: 0;
+      font-size: 1.5rem;
+      color: #111;
+    }
+    .form-group {
+      margin-bottom: 1.25rem;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      color: #222;
+    }
+    .help-text {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 0.25rem;
+      margin-bottom: 0.25rem;
+    }
+    input[type="text"],
+    input[type="email"],
+    input[type="tel"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 0.6rem;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+    textarea {
+      resize: vertical;
+    }
+    .cf-turnstile {
+      margin-top: 1rem;
+      margin-bottom: 1rem;
+    }
+    button[type="submit"] {
+      background-color: #0066cc;
+      color: #fff;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      font-size: 1rem;
+      font-weight: 600;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+    }
+    button[type="submit"]:disabled {
+      background-color: #999;
+      cursor: not-allowed;
+    }
+    #form-status {
+      margin-top: 1rem;
+      font-weight: 600;
+      min-height: 1.5rem;
+    }
+  </style>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <script src="/lead-form.js" defer></script>
+</head>
+<body>
+  <main class="form-container">
+    <h1>Request a property viewing</h1>
+    <form id="lead-form" method="post" action="#">
+      <div class="form-group">
+        <label for="name">Full Name *</label>
+        <input type="text" id="name" name="name" required maxlength="200" autocomplete="name">
+      </div>
+
+      <div class="form-group">
+        <label for="email">Email Address *</label>
+        <input type="email" id="email" name="email" required maxlength="254" autocomplete="email">
+      </div>
+
+      <div class="form-group">
+        <label for="phone">Phone Number *</label>
+        <input type="tel" id="phone" name="phone" required maxlength="50" autocomplete="tel" placeholder="+14155550192">
+        <p class="help-text">Include your country code, for example +1 415 555 0192</p>
+      </div>
+
+      <div class="form-group">
+        <label for="message">Message *</label>
+        <textarea id="message" name="message" required maxlength="5000" rows="5"></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="property_type">Property Type</label>
+        <select id="property_type" name="property_type">
+          <option value="">Not sure yet</option>
+          <option value="house">house</option>
+          <option value="apartment">apartment</option>
+          <option value="condo">condo</option>
+          <option value="land">land</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="preferred_location">Preferred Location</label>
+        <input type="text" id="preferred_location" name="preferred_location" maxlength="200">
+      </div>
+
+      <div class="form-group">
+        <label for="budget">Budget</label>
+        <input type="text" id="budget" name="budget" maxlength="200">
+      </div>
+
+      <div class="form-group">
+        <label for="timeline">Timeline</label>
+        <input type="text" id="timeline" name="timeline" maxlength="200">
+      </div>
+
+      <div class="cf-turnstile" data-sitekey='{{env "TURNSTILE_SITEKEY"}}'></div>
+
+      <button type="submit">Submit Request</button>
+      <p id="form-status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+</body>
+</html>
