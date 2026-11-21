@@ -557,6 +557,7 @@ class TestGEnvExamples(unittest.TestCase):
             "SLACK_LEADS_WEBHOOK_URL",
             "SLACK_ALERTS_WEBHOOK_URL",
             "WEBHOOK_SHARED_SECRET",
+            "TURNSTILE_SECRET_KEY",
         }
         for name, env_dict in [("backend", self.backend), ("n8n", self.n8n), ("caddy", self.caddy)]:
             for k in secret_keys:
