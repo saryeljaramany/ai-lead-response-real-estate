@@ -1,9 +1,9 @@
 """
 services/llm_service.py
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-AI SERVICE — POWERED BY OPENROUTER (NOT OPENAI DIRECTLY)
-━━━━━━━━━━━━━━━━═══════════════════════════════════════════════
+============================================================
+AI SERVICE -- POWERED BY OPENROUTER (NOT OPENAI DIRECTLY)
+============================================================
 
 This service uses OpenRouter (https://openrouter.ai) as the
 AI gateway instead of calling the OpenAI API directly.
@@ -17,8 +17,8 @@ WHY OPENROUTER?
 SDK COMPATIBILITY:
     OpenRouter is 100% compatible with the OpenAI Python SDK.
     Only the client initialisation changes (api_key + base_url +
-    default_headers). All method calls — chat.completions.create(),
-    message structure, response parsing — are identical.
+    default_headers). All method calls -- chat.completions.create(),
+    message structure, response parsing -- are identical.
 
 MODEL IN USE:
     The model identifier is read from OPENROUTER_MODEL in .env at call time.
@@ -33,11 +33,12 @@ BOOKING LINKS (Phase 8):
     (SMS). services/calendly_service.py builds the personalised URL, strips any
     URL the model invents, and guarantees the SMS stays within 160 characters.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+============================================================
 """
 
 import json
 import os
+import typing
 
 from openai import OpenAI
 
@@ -53,7 +54,7 @@ from services.calendly_service import (
 
 
 # ---------------------------------------------------------------------------
-# Lazy Loader — _get_client()
+# Lazy Loader -- _get_client()
 # ---------------------------------------------------------------------------
 
 def _get_client() -> OpenAI:
@@ -123,8 +124,58 @@ _HONESTY_RULE = (
 )
 
 
+def _reply_text(response: typing.Any) -> str:
+    """Extract and validate the stripped content string of the first choice.
+
+    Raises:
+        ValueError: When choices is missing, empty, or not indexable (or is str/bytes),
+                    the message or its content is missing, content is not a str,
+                    or the stripped content is empty.
+    """
+    choices = getattr(response, "choices", None)
+    if choices is None or isinstance(choices, (str, bytes)):
+        raise ValueError("The model returned an empty or malformed reply.")
+
+    try:
+        if len(choices) == 0:
+            raise ValueError("The model returned an empty or malformed reply.")
+        first = choices[0]
+    except (TypeError, IndexError, KeyError):
+        raise ValueError("The model returned an empty or malformed reply.") from None
+
+    message = getattr(first, "message", None)
+    if message is None:
+        raise ValueError("The model returned an empty or malformed reply.")
+
+    content = getattr(message, "content", None)
+    if not isinstance(content, str):
+        raise ValueError("The model returned an empty or malformed reply.")
+
+    stripped = content.strip()
+    if not stripped:
+        raise ValueError("The model returned an empty or malformed reply.")
+
+    return stripped
+
+
+def _strip_fences(raw: str) -> str:
+    """Strip markdown code fences if present without raising.
+
+    If raw starts with three backticks, extracts the inner content between the first
+    and second fence markers, strips any leading 'json' language tag, and strips whitespace.
+    If raw does not start with three backticks, returns raw unchanged.
+    """
+    if not raw.startswith("```"):
+        return raw
+    parts = raw.split("```")
+    inner = parts[1] if len(parts) > 1 else ""
+    if inner.startswith("json"):
+        inner = inner[4:]
+    return inner.strip()
+
+
 # ---------------------------------------------------------------------------
-# FUNCTION 1 — score_lead
+# FUNCTION 1 -- score_lead
 # ---------------------------------------------------------------------------
 
 def score_lead(lead: LeadInput) -> LeadScore:
@@ -174,7 +225,7 @@ Category ranges (derive the category from the numeric score exactly):
 - warm: {WARM_SCORE_MIN}-{HOT_SCORE_MIN - 1}
 - cold: {MIN_SCORE}-{WARM_SCORE_MIN - 1}
 
-Respond ONLY with a valid JSON object — no markdown, no explanation, no
+Respond ONLY with a valid JSON object -- no markdown, no explanation, no
 code fences. The JSON must have exactly these keys:
 
 {{
@@ -200,21 +251,15 @@ code fences. The JSON must have exactly these keys:
         temperature=0.3,  # Low temperature for deterministic, reproducible scoring
     )
 
-    raw = response.choices[0].message.content.strip()
-
-    # Strip accidental markdown code fences that some models add despite instructions
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
+    raw = _strip_fences(_reply_text(response))
     data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("The model returned an unusable score.")
     return LeadScore(**data)
 
 
 # ---------------------------------------------------------------------------
-# FUNCTION 2 — generate_email
+# FUNCTION 2 -- generate_email
 # ---------------------------------------------------------------------------
 
 def generate_email(lead: LeadInput, score: LeadScore) -> EmailPayload:
@@ -272,7 +317,7 @@ Suggested Action: {score.suggested_action}
 
 Email guidelines:
 - Address the lead by first name only
-- Be warm, professional, and concise (3–4 short paragraphs)
+- Be warm, professional, and concise (3-4 short paragraphs)
 - Tailor the reply to the lead's apparent buying, selling, or renting need
 - {_HONESTY_RULE}
 - Reference their property type, preferred location, and budget naturally when provided
@@ -280,7 +325,7 @@ Email guidelines:
 - Do NOT use generic filler phrases like "I hope this email finds you well"
 - Tone: {"urgent and enthusiastic" if score.category == "hot" else "helpful and professional for a home buyer, seller, or renter"}
 
-Respond ONLY with a valid JSON object — no markdown, no explanation:
+Respond ONLY with a valid JSON object -- no markdown, no explanation:
 
 {{
   "subject": "<compelling email subject line>",
@@ -302,15 +347,7 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
         temperature=0.7,  # Higher temperature for more natural, varied email copy
     )
 
-    raw = response.choices[0].message.content.strip()
-
-    # Strip accidental markdown code fences
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
+    raw = _strip_fences(_reply_text(response))
     data = json.loads(raw)
 
     if (
@@ -336,7 +373,7 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
 
 
 # ---------------------------------------------------------------------------
-# FUNCTION 3 — generate_sms
+# FUNCTION 3 -- generate_sms
 # ---------------------------------------------------------------------------
 
 def generate_sms(lead: LeadInput, score: LeadScore) -> SMSPayload:
@@ -394,7 +431,7 @@ SMS guidelines:
 - {booking_rule}
 - Count characters carefully before responding
 
-Respond ONLY with a valid JSON object — no markdown, no explanation:
+Respond ONLY with a valid JSON object -- no markdown, no explanation:
 
 {{
   "message": "<SMS text, max {plan.text_budget} characters>"
@@ -415,15 +452,7 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
         temperature=0.7,  # Higher temperature for natural, varied SMS copy
     )
 
-    raw = response.choices[0].message.content.strip()
-
-    # Strip accidental markdown code fences
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
+    raw = _strip_fences(_reply_text(response))
     data = json.loads(raw)
 
     raw_message = data.get("message") if isinstance(data, dict) else None
