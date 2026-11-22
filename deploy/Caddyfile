@@ -17,8 +17,11 @@
 	@intake path /webhook/lead-intake
 	@health path /health
 	@oauth path /email/auth /email/auth/callback
+	@form_page path /lead-form
+	@form_js path /lead-form.js
 	@not_post not method POST
 	@not_get not method GET
+	@not_get_head not method GET HEAD
 
 	# 1) Public lead intake -> n8n. Nothing else of n8n is reachable from the internet.
 	handle @intake {
@@ -79,7 +82,35 @@
 		}
 	}
 
-	# 4) Everything else is closed.
+	# 4) Lead form page (GET/HEAD only, template injection for Turnstile sitekey)
+	handle @form_page {
+		route {
+			respond @not_get_head "Method Not Allowed" 405
+			root * /srv/site
+			rewrite * /lead-form.html
+			header {
+				Content-Security-Policy "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+				Cache-Control "no-store"
+			}
+			templates
+			file_server
+		}
+	}
+
+	# 5) Lead form client script (GET/HEAD only)
+	handle @form_js {
+		route {
+			respond @not_get_head "Method Not Allowed" 405
+			root * /srv/site
+			header {
+				Content-Security-Policy "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src 'self' https://challenges.cloudflare.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+				Cache-Control "public, max-age=300"
+			}
+			file_server
+		}
+	}
+
+	# 6) Everything else is closed.
 	handle {
 		respond "Not Found" 404
 	}

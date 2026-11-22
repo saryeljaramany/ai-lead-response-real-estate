@@ -19,7 +19,7 @@
     },
     {
       "parameters": {
-        "jsCode": "try {\n  const req = $input.first().json || {};\n  const body = (req.body && typeof req.body === 'object') ? req.body : {};\n  const headers = req.headers || {};\n  const secret = String($env.WEBHOOK_SHARED_SECRET || '').trim();\n  if (secret && String(headers['x-webhook-secret'] || '') !== secret) {\n    return [{ json: { ok: false, httpStatus: 401, responseBody: { error: 'unauthorized' } } }];\n  }\n  const clean = (v) => {\n    if (typeof v === 'string') return v.trim();\n    if (typeof v === 'number' && Number.isFinite(v)) return String(v);\n    return '';\n  };\n  const LIMITS = { name: 200, email: 254, phone: 50, message: 5000, property_type: 200, preferred_location: 200, budget: 200, timeline: 200 };\n  const REQUIRED = ['name', 'email', 'phone', 'message'];\n  const OPTIONAL = ['property_type', 'preferred_location', 'budget', 'timeline'];\n  const lead = {};\n  const missing = [];\n  for (const k of REQUIRED) {\n    const v = clean(body[k]);\n    if (v) { lead[k] = v.slice(0, LIMITS[k]); } else { missing.push(k); }\n  }\n  for (const k of OPTIONAL) {\n    const v = clean(body[k]);\n    if (v) { lead[k] = v.slice(0, LIMITS[k]); }\n  }\n  if (missing.length) {\n    return [{ json: { ok: false, httpStatus: 400, responseBody: { error: 'invalid_lead', missing } } }];\n  }\n  return [{ json: { ok: true, lead } }];\n} catch (e) {\n  return [{ json: { ok: false, httpStatus: 500, responseBody: { error: 'workflow_error' } } }];\n}"
+        "jsCode": "try {\n  const req = $input.first().json || {};\n  const body = (req.body && typeof req.body === 'object') ? req.body : {};\n  const headers = req.headers || {};\n  const secret = String($env.WEBHOOK_SHARED_SECRET || '').trim();\n  if (secret && String(headers['x-webhook-secret'] || '') !== secret) {\n    return [{ json: { ok: false, httpStatus: 401, responseBody: { error: 'unauthorized' } } }];\n  }\n  const clean = (v) => {\n    if (typeof v === 'string') return v.trim();\n    if (typeof v === 'number' && Number.isFinite(v)) return String(v);\n    return '';\n  };\n  const captchaToken = clean(body.captcha_token).slice(0, 2100);\n  const remoteIp = String(headers['x-forwarded-for'] || '').split(',')[0].trim();\n  const LIMITS = { name: 200, email: 254, phone: 50, message: 5000, property_type: 200, preferred_location: 200, budget: 200, timeline: 200 };\n  const REQUIRED = ['name', 'email', 'phone', 'message'];\n  const OPTIONAL = ['property_type', 'preferred_location', 'budget', 'timeline'];\n  const lead = {};\n  const missing = [];\n  for (const k of REQUIRED) {\n    const v = clean(body[k]);\n    if (v) { lead[k] = v.slice(0, LIMITS[k]); } else { missing.push(k); }\n  }\n  for (const k of OPTIONAL) {\n    const v = clean(body[k]);\n    if (v) { lead[k] = v.slice(0, LIMITS[k]); }\n  }\n  if (missing.length) {\n    return [{ json: { ok: false, httpStatus: 400, responseBody: { error: 'invalid_lead', missing } } }];\n  }\n  return [{ json: { ok: true, lead, captchaRequired: !secret, captchaToken, remoteIp } }];\n} catch (e) {\n  return [{ json: { ok: false, httpStatus: 500, responseBody: { error: 'workflow_error' } } }];\n}"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -145,7 +145,7 @@
     {
       "parameters": {
         "mode": "runOnceForEachItem",
-        "jsCode": "const state = $('Prepare Attempt').item.json;\nconst r = $input.item.json || {};\nconst statusCode = Number.isInteger(r.statusCode) ? r.statusCode : null;\nlet body = r.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\nif (!body || typeof body !== 'object') { body = null; }\n\nconst networkError = statusCode === null;\nconst hasReport = body !== null && typeof body.status === 'string' && Array.isArray(body.steps);\nconst retryObj = (hasReport && body.retry && typeof body.retry === 'object') ? body.retry : {};\nconst retryRecommended = hasReport && retryObj.recommended === true;\nconst retrySteps = Array.isArray(retryObj.steps) ? retryObj.steps.map(String) : [];\nconst repairs = (hasReport && Array.isArray(body.repair)) ? body.repair : [];\nconst steps = hasReport ? body.steps.filter((x) => x && typeof x === 'object') : [];\nconst failedSteps = steps.filter((x) => x.status === 'failed').map((x) => ({\n  name: String(x.name || '?'),\n  reason: String(x.reason || '?'),\n  category: (x.error && x.error.category) ? String(x.error.category) : String(x.reason || '?'),\n  retryable: x.retryable === true,\n  message: (x.error && x.error.message) ? String(x.error.message).slice(0, 200) : '',\n}));\nconst stepSummary = steps.map((x) => ({ name: String(x.name || '?'), status: String(x.status || '?'), reason: String(x.reason || '?') }));\nconst dryRun = steps.some((x) => x.reason === 'dry_run');\nconst category = (hasReport && typeof body.category === 'string') ? body.category : null;\nconst score = (hasReport && Number.isInteger(body.score)) ? body.score : null;\nconst pipelineStatus = hasReport ? body.status : null;\nconst canRetry = state.attempt < state.maxAttempts;\n\nlet decision;\nlet reason;\nif (networkError) {\n  decision = canRetry ? 'retry' : 'terminal_failure';\n  reason = canRetry ? 'network_error' : 'retries_exhausted';\n} else if (!hasReport) {\n  const transientHttp = [429, 502, 503, 504].includes(statusCode);\n  decision = (transientHttp && canRetry) ? 'retry' : 'terminal_failure';\n  reason = transientHttp ? (canRetry ? 'upstream_unavailable' : 'retries_exhausted') : ('http_' + statusCode);\n} else if (repairs.length > 0) {\n  decision = 'repair';\n  reason = 'flag_repair_needed';\n} else if (retryRecommended && canRetry) {\n  decision = 'retry';\n  reason = 'retryable_steps';\n} else if (pipelineStatus === 'completed') {\n  decision = ['hot', 'warm'].includes(category) ? 'notify_success' : 'quiet_success';\n  reason = 'completed';\n} else {\n  decision = 'terminal_failure';\n  reason = (retryRecommended && !canRetry) ? 'retries_exhausted' : (pipelineStatus === 'failed' ? 'pipeline_failed' : 'partial_not_retryable');\n}\n\nreturn { json: {\n  id: state.id, lead: state.lead, attempt: state.attempt, maxAttempts: state.maxAttempts,\n  httpStatus: statusCode, networkError, hasReport, pipelineStatus, category, score,\n  retryRecommended, retrySteps, repairs, failedSteps, steps: stepSummary, dryRun, canRetry,\n  decision, reason,\n} };"
+        "jsCode": "const state = $('Prepare Attempt').item.json;\nconst r = $input.item.json || {};\nconst statusCode = Number.isInteger(r.statusCode) ? r.statusCode : null;\nlet body = r.body;\nif (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\nif (!body || typeof body !== 'object') { body = null; }\n\nconst networkError = statusCode === null;\nconst hasReport = body !== null && typeof body.status === 'string' && Array.isArray(body.steps);\nconst retryObj = (hasReport && body.retry && typeof body.retry === 'object') ? body.retry : {};\nconst retryRecommended = hasReport && retryObj.recommended === true;\nconst retrySteps = Array.isArray(retryObj.steps) ? retryObj.steps.map(String) : [];\nconst repairs = (hasReport && Array.isArray(body.repair)) ? body.repair : [];\nconst steps = hasReport ? body.steps.filter((x) => x && typeof x === 'object') : [];\nconst failedSteps = steps.filter((x) => x.status === 'failed').map((x) => ({\n  name: String(x.name || '?'),\n  reason: String(x.reason || '?'),\n  category: (x.error && x.error.category) ? String(x.error.category) : String(x.reason || '?'),\n  retryable: x.retryable === true,\n  message: (x.error && x.error.message) ? String(x.error.message).slice(0, 200) : '',\n}));\nconst stepSummary = steps.map((x) => ({ name: String(x.name || '?'), status: String(x.status || '?'), reason: String(x.reason || '?') }));\nconst dryRun = steps.some((x) => x.reason === 'dry_run');\nconst category = (hasReport && typeof body.category === 'string') ? body.category : null;\nconst score = (hasReport && Number.isInteger(body.score)) ? body.score : null;\nconst pipelineStatus = hasReport ? body.status : null;\nconst canRetry = state.attempt < state.maxAttempts;\n\nlet decision;\nlet reason;\nif (networkError) {\n  decision = canRetry ? 'retry' : 'terminal_failure';\n  reason = canRetry ? 'network_error' : 'retries_exhausted';\n} else if (!hasReport) {\n  const transientHttp = [429, 502, 504].includes(statusCode);\n  decision = (transientHttp && canRetry) ? 'retry' : 'terminal_failure';\n  reason = transientHttp ? (canRetry ? 'upstream_unavailable' : 'retries_exhausted') : ('http_' + statusCode);\n} else if (repairs.length > 0) {\n  decision = 'repair';\n  reason = 'flag_repair_needed';\n} else if (retryRecommended && canRetry) {\n  decision = 'retry';\n  reason = 'retryable_steps';\n} else if (pipelineStatus === 'completed') {\n  decision = ['hot', 'warm'].includes(category) ? 'notify_success' : 'quiet_success';\n  reason = 'completed';\n} else {\n  decision = 'terminal_failure';\n  reason = (retryRecommended && !canRetry) ? 'retries_exhausted' : (pipelineStatus === 'failed' ? 'pipeline_failed' : 'partial_not_retryable');\n}\n\nreturn { json: {\n  id: state.id, lead: state.lead, attempt: state.attempt, maxAttempts: state.maxAttempts,\n  httpStatus: statusCode, networkError, hasReport, pipelineStatus, category, score,\n  retryRecommended, retrySteps, repairs, failedSteps, steps: stepSummary, dryRun, canRetry,\n  decision, reason,\n} };"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -364,6 +364,86 @@
       ],
       "id": "a1000001-0021-4001-8001-000000000021",
       "name": "Cold Lead: No Alert"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.captchaRequired === true ? 0 : 1 }}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        900,
+        -400
+      ],
+      "id": "a1000001-0022-4001-8001-000000000022",
+      "name": "Route: Captcha Needed?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ String($env.BACKEND_BASE_URL || '').replace(/\\/+$/, '') }}/captcha/verify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Key",
+              "value": "={{ $env.BACKEND_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ token: $json.captchaToken, remote_ip: $json.remoteIp || null }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1200,
+        -400
+      ],
+      "id": "a1000001-0023-4001-8001-000000000023",
+      "name": "Verify Captcha",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $input.item.json || {};\nconst lead = $('Validate Lead').item.json.lead;\nlet body = r.body;\nif (typeof body === 'string') {\n  try {\n    body = JSON.parse(body);\n  } catch (e) {\n    body = null;\n  }\n}\nif (r.statusCode === 200 && body && typeof body === 'object' && !Array.isArray(body)) {\n  if (body.verified === true) {\n    return { json: { ok: true, lead } };\n  }\n  if (body.verified === false) {\n    return { json: { ok: false, httpStatus: 403, responseBody: { error: 'captcha_failed' } } };\n  }\n}\nreturn { json: { ok: false, httpStatus: 503, responseBody: { error: 'captcha_unavailable' } } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        -400
+      ],
+      "id": "a1000001-0024-4001-8001-000000000024",
+      "name": "Evaluate Captcha"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 2,
+        "output": "={{ $json.ok === true ? 0 : 1 }}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.5,
+      "position": [
+        1800,
+        -400
+      ],
+      "id": "a1000001-0025-4001-8001-000000000025",
+      "name": "Route: Captcha OK?"
     }
   ],
   "connections": {
@@ -393,7 +473,7 @@
       "main": [
         [
           {
-            "node": "Init State",
+            "node": "Route: Captcha Needed?",
             "type": "main",
             "index": 0
           }
@@ -583,6 +663,64 @@
         [
           {
             "node": "Fail Execution (keep data)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Captcha Needed?": {
+      "main": [
+        [
+          {
+            "node": "Verify Captcha",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Init State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Captcha": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Captcha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Captcha": {
+      "main": [
+        [
+          {
+            "node": "Route: Captcha OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route: Captcha OK?": {
+      "main": [
+        [
+          {
+            "node": "Init State",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Invalid",
             "type": "main",
             "index": 0
           }

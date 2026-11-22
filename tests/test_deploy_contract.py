@@ -433,6 +433,25 @@ class TestDCompose(unittest.TestCase):
         )
 
 
+    def test_d12_site_mount_on_caddy_only(self):
+        self.assertIn(
+            "./site:/srv/site:ro",
+            self.services["caddy"],
+            "caddy service must mount ./site:/srv/site:ro",
+        )
+        for svc in ["backend", "n8n"]:
+            self.assertNotIn(
+                "/srv/site",
+                self.services[svc],
+                f"{svc} must not mount /srv/site",
+            )
+            self.assertNotIn(
+                "./site",
+                self.services[svc],
+                f"{svc} must not mount ./site",
+            )
+
+
 class TestECaddyfile(unittest.TestCase):
     """Assertions for deploy/Caddyfile."""
 
@@ -452,7 +471,14 @@ class TestECaddyfile(unittest.TestCase):
         tokens = []
         for pl in path_lines:
             tokens.extend(pl.strip().split())
-        expected = ["/webhook/lead-intake", "/health", "/email/auth", "/email/auth/callback"]
+        expected = [
+            "/webhook/lead-intake",
+            "/health",
+            "/email/auth",
+            "/email/auth/callback",
+            "/lead-form",
+            "/lead-form.js",
+        ]
         self.assertEqual(
             sorted(tokens),
             sorted(expected),
@@ -516,6 +542,74 @@ class TestECaddyfile(unittest.TestCase):
         )
 
 
+    def test_e07_lead_form_page_handler(self):
+        page_match = re.search(r"handle\s+@form_page\s*\{([\s\S]*?)\n\t\}", self.stripped)
+        self.assertIsNotNone(page_match, "handle @form_page block not found")
+        body = page_match.group(1)
+        self.assertIn("templates", body, "Page handler must contain 'templates'")
+        self.assertRegex(
+            body,
+            r'respond\s+@not_get_head\s+["\']Method Not Allowed["\']\s+405',
+            "Page handler must answer non-GET/HEAD with 405",
+        )
+        self.assertIn('Cache-Control "no-store"', body, "Page handler must set Cache-Control 'no-store'")
+
+        idx_root = body.find("root * /srv/site")
+        idx_rewrite = body.find("rewrite * /lead-form.html")
+        idx_header = body.find("header {")
+        idx_templates = body.find("templates")
+        idx_fileserver = body.find("file_server")
+        self.assertTrue(
+            -1 < idx_root < idx_rewrite < idx_header < idx_templates < idx_fileserver,
+            f"Expected order root < rewrite < header < templates < file_server, got: "
+            f"root={idx_root}, rewrite={idx_rewrite}, header={idx_header}, templates={idx_templates}, file_server={idx_fileserver}",
+        )
+
+    def test_e08_lead_form_script_handler(self):
+        js_match = re.search(r"handle\s+@form_js\s*\{([\s\S]*?)\n\t\}", self.stripped)
+        self.assertIsNotNone(js_match, "handle @form_js block not found")
+        body = js_match.group(1)
+        self.assertIn("file_server", body, "Script handler must contain 'file_server'")
+        self.assertNotIn("templates", body, "Script handler must NOT contain 'templates'")
+        self.assertRegex(
+            body,
+            r'respond\s+@not_get_head\s+["\']Method Not Allowed["\']\s+405',
+            "Script handler must answer non-GET/HEAD with 405",
+        )
+        self.assertIn('Cache-Control "public, max-age=300"', body, "Script handler must set Cache-Control 'public, max-age=300'")
+
+        idx_root = body.find("root * /srv/site")
+        idx_header = body.find("header {")
+        idx_fileserver = body.find("file_server")
+        self.assertTrue(
+            -1 < idx_root < idx_header < idx_fileserver,
+            f"Expected order root < header < file_server, got: root={idx_root}, header={idx_header}, file_server={idx_fileserver}",
+        )
+
+    def test_e09_csp_headers_and_security(self):
+        for handler_name in ["@form_page", "@form_js"]:
+            m = re.search(rf"handle\s+{handler_name}\s*\{{([\s\S]*?)\n\t\}}", self.stripped)
+            self.assertIsNotNone(m, f"handle {handler_name} block not found")
+            body = m.group(1)
+            self.assertIn("Content-Security-Policy", body)
+            self.assertIn("script-src 'self' https://challenges.cloudflare.com", body)
+            self.assertIn("frame-ancestors 'none'", body)
+            self.assertNotIn("unsafe-eval", body)
+            self.assertNotRegex(
+                body,
+                r"script-src[^;\"]*'unsafe-inline'",
+                f"{handler_name} must not allow 'unsafe-inline' in script-src",
+            )
+            self.assertIn("style-src 'self' 'unsafe-inline'", body)
+
+    def test_e10_root_srv_site_and_no_other_file_server_or_templates(self):
+        self.assertIn("root * /srv/site", self.stripped)
+        fs_matches = re.findall(r"\bfile_server\b", self.stripped)
+        self.assertEqual(len(fs_matches), 2, f"file_server must appear exactly twice, got {len(fs_matches)}")
+        tmpl_matches = re.findall(r"\btemplates\b", self.stripped)
+        self.assertEqual(len(tmpl_matches), 1, f"templates must appear exactly once, got {len(tmpl_matches)}")
+
+
 class TestFCaddyDockerfile(unittest.TestCase):
     """Assertions for deploy/caddy/Dockerfile."""
 
@@ -557,6 +651,7 @@ class TestGEnvExamples(unittest.TestCase):
             "SLACK_LEADS_WEBHOOK_URL",
             "SLACK_ALERTS_WEBHOOK_URL",
             "WEBHOOK_SHARED_SECRET",
+            "TURNSTILE_SECRET_KEY",
         }
         for name, env_dict in [("backend", self.backend), ("n8n", self.n8n), ("caddy", self.caddy)]:
             for k in secret_keys:
@@ -587,6 +682,11 @@ class TestGEnvExamples(unittest.TestCase):
 
         self.assertIn("APP_DOMAIN", self.caddy)
         self.assertIn("ACME_EMAIL", self.caddy)
+
+
+    def test_g04_turnstile_sitekey_defined_in_caddy(self):
+        self.assertIn("TURNSTILE_SITEKEY", self.caddy)
+        self.assertEqual(self.caddy["TURNSTILE_SITEKEY"], "")
 
 
 class TestHDriftGuard(unittest.TestCase):

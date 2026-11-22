@@ -5,7 +5,7 @@ from fastapi import Depends, FastAPI
 from dotenv import load_dotenv
 import os
 
-from routers import leads, ai, email, sms, crm
+from routers import leads, ai, email, sms, crm, captcha
 from services.security import require_api_key
 
 # =============================================================================
@@ -38,6 +38,7 @@ app.include_router(ai.router)     # handles /ai routes
 app.include_router(email.router)  # handles /email routes
 app.include_router(sms.router)  # handles /sms routes
 app.include_router(crm.router)  # handles /crm routes
+app.include_router(captcha.router)  # handles /captcha routes
 
 # =============================================================================
 # Endpoints

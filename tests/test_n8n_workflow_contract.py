@@ -365,30 +365,31 @@ _REQUIRED_NODE_NAMES = [
     "After Repair", "Compute Backoff", "Wait Before Retry", "Build Slack Success",
     "Slack: Lead Summary", "Build Slack Alert", "Slack: Error Alert",
     "Fail Execution (keep data)", "Cold Lead: No Alert",
+    "Route: Captcha Needed?", "Verify Captcha", "Evaluate Captcha", "Route: Captcha OK?",
 ]
 
 
 class TestBRequiredNodes(unittest.TestCase):
 
-    def test_b01_all_21_names_present(self):
+    def test_b01_all_25_names_present(self):
         existing = {n["name"] for n in _NODES}
         for name in _REQUIRED_NODE_NAMES:
             self.assertIn(name, existing, f"Required node missing: {name!r}")
 
-    def test_b02_exactly_21_nodes(self):
-        self.assertEqual(len(_NODES), 21, f"Expected 21 nodes, got {len(_NODES)}")
+    def test_b02_exactly_25_nodes(self):
+        self.assertEqual(len(_NODES), 25, f"Expected 25 nodes, got {len(_NODES)}")
 
     def test_b03_type_counts(self):
         from collections import Counter
         suffix_counts = Counter(n["type"].split(".")[-1] for n in _NODES)
         self.assertEqual(suffix_counts["webhook"], 1, "Expected 1 webhook node")
         self.assertEqual(suffix_counts["respondToWebhook"], 2, "Expected 2 respondToWebhook nodes")
-        self.assertEqual(suffix_counts["httpRequest"], 4, "Expected 4 httpRequest nodes")
-        self.assertEqual(suffix_counts["switch"], 2, "Expected 2 switch nodes")
+        self.assertEqual(suffix_counts["httpRequest"], 5, "Expected 5 httpRequest nodes")
+        self.assertEqual(suffix_counts["switch"], 4, "Expected 4 switch nodes")
         self.assertEqual(suffix_counts["wait"], 1, "Expected 1 wait node")
         self.assertEqual(suffix_counts["stopAndError"], 1, "Expected 1 stopAndError node")
         self.assertEqual(suffix_counts["noOp"], 1, "Expected 1 noOp node")
-        self.assertEqual(suffix_counts["code"], 9, "Expected 9 code nodes")
+        self.assertEqual(suffix_counts["code"], 10, "Expected 10 code nodes")
 
 
 # ===========================================================================
@@ -474,6 +475,47 @@ class TestDCallPipeline(unittest.TestCase):
 # ===========================================================================
 # E. Apply Repair HTTP node
 # ===========================================================================
+
+
+# ===========================================================================
+# D2. Verify Captcha HTTP node
+# ===========================================================================
+class TestD2VerifyCaptcha(unittest.TestCase):
+
+    def setUp(self):
+        self.node = node_by_name("Verify Captcha")
+        self.params = self.node["parameters"]
+        self.opts = self.params.get("options", {})
+        self.resp = self.opts.get("response", {}).get("response", {})
+
+    def test_d2_01_method_post(self):
+        self.assertEqual(self.params.get("method"), "POST")
+
+    def test_d2_02_url_references_backend_base_url_and_captcha_verify(self):
+        url = self.params.get("url", "")
+        self.assertIn("$env.BACKEND_BASE_URL", url)
+        self.assertIn("/captcha/verify", url)
+
+    def test_d2_03_json_body_references_captcha_token_and_remote_ip(self):
+        body = self.params.get("jsonBody", "")
+        self.assertIn("captchaToken", body)
+        self.assertIn("remoteIp", body)
+
+    def test_d2_04_full_response_and_never_error_true(self):
+        self.assertTrue(self.resp.get("fullResponse"))
+        self.assertTrue(self.resp.get("neverError"))
+
+    def test_d2_05_timeout_15000(self):
+        self.assertEqual(self.opts.get("timeout"), 15000)
+
+    def test_d2_06_on_error_continue_regular_output(self):
+        self.assertEqual(self.node.get("onError"), "continueRegularOutput")
+
+    def test_d2_07_retry_on_fail_not_true(self):
+        self.assertFalse(self.node.get("retryOnFail", False))
+        self.assertFalse(self.opts.get("retryOnFail", False))
+
+
 class TestEApplyRepair(unittest.TestCase):
 
     def setUp(self):
@@ -660,8 +702,29 @@ class TestHConnections(unittest.TestCase):
             self._assert_edge(src, tgt, 0)
 
     def test_h05_route_valid_outputs(self):
-        self._assert_edge("Route: Valid?", "Init State", 0)
+        self._assert_edge("Route: Valid?", "Route: Captcha Needed?", 0)
         self._assert_edge("Route: Valid?", "Respond Invalid", 1)
+
+    def test_h05b_captcha_chain_edges(self):
+        self._assert_edge("Route: Captcha Needed?", "Verify Captcha", 0)
+        self._assert_edge("Route: Captcha Needed?", "Init State", 1)
+        self._assert_edge("Verify Captcha", "Evaluate Captcha", 0)
+        self._assert_edge("Evaluate Captcha", "Route: Captcha OK?", 0)
+        self._assert_edge("Route: Captcha OK?", "Init State", 0)
+        self._assert_edge("Route: Captcha OK?", "Respond Invalid", 1)
+
+    def test_h05c_respond_invalid_has_exactly_two_incoming_edges(self):
+        incoming = []
+        for src, conn in _CONNECTIONS.items():
+            for slot_idx, slot in enumerate(conn.get("main", [])):
+                for c in slot:
+                    if c.get("node") == "Respond Invalid":
+                        incoming.append((src, slot_idx))
+        self.assertEqual(
+            sorted(incoming),
+            sorted([("Route: Valid?", 1), ("Route: Captcha OK?", 1)]),
+            f"Respond Invalid must have exactly 2 incoming edges, got: {incoming}"
+        )
 
     def test_h06_route_decision_5_outputs(self):
         expected = [
@@ -826,7 +889,22 @@ class TestJCodeLogicMarkers(unittest.TestCase):
         self._has("Evaluate Response", "networkError")
 
     def test_j09_evaluate_transient_http_codes(self):
-        self._has("Evaluate Response", "429, 502, 503, 504")
+        code = jscode("Evaluate Response")
+        self.assertIn(
+            "[429, 502, 504]",
+            code,
+            "Evaluate Response must contain '[429, 502, 504]'",
+        )
+        self.assertNotIn(
+            "503, 504",
+            code,
+            "Evaluate Response must not contain '503, 504'",
+        )
+        self.assertNotIn(
+            "[429, 502, 503, 504]",
+            code,
+            "Evaluate Response must not contain '[429, 502, 503, 504]'",
+        )
 
     def test_j10_evaluate_repair_before_retry(self):
         code = jscode("Evaluate Response")
@@ -930,6 +1008,27 @@ class TestKPrivacy(unittest.TestCase):
     def test_k07_alert_does_not_read_s_lead(self):
         self._assert_no_pattern("Build Slack Alert", r"\bs\.lead\b")
 
+    def test_k08_other_nodes_contain_no_captcha_or_remote_ip(self):
+        nodes_to_check = [
+            "Init State", "Prepare Attempt", "Evaluate Response", "Build Repairs",
+            "After Repair", "Build Slack Success", "Build Slack Alert"
+        ]
+        for name in nodes_to_check:
+            code = jscode(name).lower()
+            self.assertNotIn("captcha", code, f"{name!r} code must not contain 'captcha'")
+            self.assertNotIn("remoteip", code, f"{name!r} code must not contain 'remoteIp'")
+
+    def test_k09_call_pipeline_body_contains_neither_captcha_nor_remote_ip(self):
+        call_pipe = node_by_name("Call Pipeline")
+        body = call_pipe.get("parameters", {}).get("jsonBody", "").lower()
+        self.assertNotIn("captcha", body, "'Call Pipeline' jsonBody must not contain 'captcha'")
+        self.assertNotIn("remoteip", body, "'Call Pipeline' jsonBody must not contain 'remoteIp'")
+
+    def test_k10_evaluate_captcha_does_not_contain_captchatoken_or_remoteip(self):
+        code = jscode("Evaluate Captcha")
+        self.assertNotIn("captchaToken", code, "'Evaluate Captcha' code must not contain 'captchaToken'")
+        self.assertNotIn("remoteIp", code, "'Evaluate Captcha' code must not contain 'remoteIp'")
+
 
 # ===========================================================================
 # L. JS bracket balance
@@ -971,6 +1070,9 @@ class TestLBracketBalance(unittest.TestCase):
 
     def test_l_build_slack_alert(self):
         self._test_node("Build Slack Alert")
+
+    def test_l_evaluate_captcha(self):
+        self._test_node("Evaluate Captcha")
 
     @unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found -- skipping syntax check")
     def test_l_node_syntax_check_all_code_nodes(self):
@@ -1183,20 +1285,20 @@ class TestOApiKeyContract(unittest.TestCase):
                         nodes_with_header.append(n.get("name"))
         self.assertEqual(
             sorted(nodes_with_header),
-            sorted(["Call Pipeline", "Apply Repair"]),
-            "Exactly 'Call Pipeline' and 'Apply Repair' must carry the X-API-Key header",
+            sorted(["Call Pipeline", "Apply Repair", "Verify Captcha"]),
+            "Exactly 'Call Pipeline', 'Apply Repair' and 'Verify Captcha' must carry the X-API-Key header",
         )
 
     def test_o02_no_other_node_mentions_backend_api_key(self):
         for n in _NODES:
             name = n.get("name")
-            if name not in {"Call Pipeline", "Apply Repair"}:
+            if name not in {"Call Pipeline", "Apply Repair", "Verify Captcha"}:
                 self.assertNotIn(
                     "$env.BACKEND_API_KEY",
                     json.dumps(n),
                     f"Node {name!r} must not reference $env.BACKEND_API_KEY",
                 )
-            if name not in {"Call Pipeline", "Apply Repair", "Build Slack Alert"}:
+            if name not in {"Call Pipeline", "Apply Repair", "Verify Captcha", "Build Slack Alert"}:
                 self.assertNotIn(
                     "BACKEND_API_KEY",
                     json.dumps(n),
@@ -1237,6 +1339,328 @@ class TestOApiKeyContract(unittest.TestCase):
             "",
             f"BACKEND_API_KEY must be empty in .env.n8n.example, got {m.group(1)!r}",
         )
+
+
+# ===========================================================================
+# P. Evaluate Response behaviour (executes node code via node CLI)
+# ===========================================================================
+@unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found")
+class TestEvaluateResponseBehaviour(unittest.TestCase):
+    """Executes Evaluate Response jsCode in node to verify branching behavior."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js_code = jscode("Evaluate Response")
+
+    def _eval(self, status_code=None, body=None, attempt=1, max_attempts=3):
+        input_item = {}
+        if status_code is not None:
+            input_item["statusCode"] = status_code
+        if body is not None:
+            input_item["body"] = body
+
+        state = {
+            "id": "i",
+            "lead": {},
+            "attempt": attempt,
+            "maxAttempts": max_attempts,
+        }
+
+        script = (
+            f"const $input = {{ item: {{ json: {json.dumps(input_item)} }} }};\n"
+            f"const $ = (name) => ({{ item: {{ json: {json.dumps(state)} }} }});\n"
+            f"const res = (function() {{\n{self.js_code}\n}})();\n"
+            f"console.log(JSON.stringify({{ decision: res.json.decision, reason: res.json.reason }}));\n"
+        )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            out = json.loads(res.stdout.strip())
+            return out["decision"], out["reason"]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_p01_status_503_no_body(self):
+        decision, reason = self._eval(status_code=503, body=None)
+        self.assertEqual(decision, "terminal_failure")
+        self.assertEqual(reason, "http_503")
+
+    def test_p02_status_401_no_body(self):
+        decision, reason = self._eval(status_code=401, body=None)
+        self.assertEqual(decision, "terminal_failure")
+        self.assertEqual(reason, "http_401")
+
+    def test_p03_status_502_no_body_attempt_1(self):
+        decision, reason = self._eval(status_code=502, body=None, attempt=1)
+        self.assertEqual(decision, "retry")
+        self.assertEqual(reason, "upstream_unavailable")
+
+    def test_p04_status_502_no_body_attempt_3(self):
+        decision, reason = self._eval(status_code=502, body=None, attempt=3)
+        self.assertEqual(decision, "terminal_failure")
+        self.assertEqual(reason, "retries_exhausted")
+
+    def test_p05_network_error_attempt_1(self):
+        decision, reason = self._eval(status_code=None, body=None, attempt=1)
+        self.assertEqual(decision, "retry")
+        self.assertEqual(reason, "network_error")
+
+    def test_p06_completed_report_hot(self):
+        body = {
+            "status": "completed",
+            "steps": [],
+            "category": "hot",
+            "score": 90,
+            "retry": {"recommended": False, "steps": []},
+            "repair": [],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "notify_success")
+        self.assertEqual(reason, "completed")
+
+    def test_p07_completed_report_cold(self):
+        body = {
+            "status": "completed",
+            "steps": [],
+            "category": "cold",
+            "score": 20,
+            "retry": {"recommended": False, "steps": []},
+            "repair": [],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "quiet_success")
+        self.assertEqual(reason, "completed")
+
+    def test_p08_partial_report_retry_recommended_attempt_1(self):
+        body = {
+            "status": "partial",
+            "steps": [],
+            "retry": {"recommended": True, "steps": ["sms"]},
+            "repair": [],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "retry")
+        self.assertEqual(reason, "retryable_steps")
+
+    def test_p09_completed_report_repair_items_attempt_1(self):
+        body = {
+            "status": "completed",
+            "steps": [],
+            "retry": {"recommended": False, "steps": []},
+            "repair": [{"action": "PATCH /leads/i/flags", "body": {"email_sent": True}}],
+        }
+        decision, reason = self._eval(status_code=200, body=body, attempt=1)
+        self.assertEqual(decision, "repair")
+        self.assertEqual(reason, "flag_repair_needed")
+
+
+
+
+# ===========================================================================
+# Q. Validate Lead behaviour (executes node code via node CLI)
+# ===========================================================================
+@unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found")
+class TestValidateLeadBehaviour(unittest.TestCase):
+    """Executes Validate Lead jsCode in node to verify validation and CAPTCHA parsing."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js_code = jscode("Validate Lead")
+
+    def _eval(self, body=None, headers=None, secret=""):
+        req = {}
+        if body is not None:
+            req["body"] = body
+        if headers is not None:
+            req["headers"] = headers
+
+        script = (
+            f"const $input = {{ first: () => ({{ json: {json.dumps(req)} }}) }};\n"
+            f"const $env = {{ WEBHOOK_SHARED_SECRET: {json.dumps(secret)} }};\n"
+            f"const res = (function() {{\n{self.js_code}\n}})();\n"
+            f"console.log(JSON.stringify(res));\n"
+        )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return json.loads(res.stdout.strip())
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def _valid_body(self, **kwargs):
+        b = {
+            "name": "Jane Doe",
+            "email": "jane@example.com",
+            "phone": "+15551234567",
+            "message": "Interested in 3BR house",
+        }
+        b.update(kwargs)
+        return b
+
+    def test_q01_no_secret_with_captcha_token_lead_has_no_token_key(self):
+        body = self._valid_body(captcha_token="token_abc_123")
+        out = self._eval(body=body, secret="")
+        item = out[0]["json"]
+        self.assertTrue(item.get("ok"))
+        self.assertTrue(item.get("captchaRequired"))
+        self.assertEqual(item.get("captchaToken"), "token_abc_123")
+        self.assertNotIn("captcha_token", item.get("lead", {}))
+
+    def test_q02_x_forwarded_for_first_item_parsed(self):
+        body = self._valid_body()
+        headers = {"x-forwarded-for": "203.0.113.9, 10.0.0.1"}
+        out = self._eval(body=body, headers=headers, secret="")
+        item = out[0]["json"]
+        self.assertEqual(item.get("remoteIp"), "203.0.113.9")
+
+    def test_q03_secret_set_and_correct_header(self):
+        body = self._valid_body()
+        headers = {"x-webhook-secret": "test_shared_secret"}
+        out = self._eval(body=body, headers=headers, secret="test_shared_secret")
+        item = out[0]["json"]
+        self.assertTrue(item.get("ok"))
+        self.assertFalse(item.get("captchaRequired"))
+
+    def test_q04_secret_set_and_wrong_or_missing_header_returns_401(self):
+        body = self._valid_body()
+        # Missing header
+        out_missing = self._eval(body=body, headers={}, secret="test_shared_secret")
+        self.assertFalse(out_missing[0]["json"].get("ok"))
+        self.assertEqual(out_missing[0]["json"].get("httpStatus"), 401)
+        # Wrong header
+        headers_wrong = {"x-webhook-secret": "wrong_secret"}
+        out_wrong = self._eval(body=body, headers=headers_wrong, secret="test_shared_secret")
+        self.assertFalse(out_wrong[0]["json"].get("ok"))
+        self.assertEqual(out_wrong[0]["json"].get("httpStatus"), 401)
+
+    def test_q05_missing_required_lead_field_returns_400(self):
+        body = {"name": "Jane Doe"}  # missing email, phone, message
+        out = self._eval(body=body, secret="")
+        item = out[0]["json"]
+        self.assertFalse(item.get("ok"))
+        self.assertEqual(item.get("httpStatus"), 400)
+        self.assertEqual(item.get("responseBody", {}).get("error"), "invalid_lead")
+
+    def test_q06_oversized_captcha_token_truncated_to_2100(self):
+        long_token = "t" * 5000
+        body = self._valid_body(captcha_token=long_token)
+        out = self._eval(body=body, secret="")
+        item = out[0]["json"]
+        self.assertEqual(len(item.get("captchaToken", "")), 2100)
+        self.assertEqual(item.get("captchaToken"), "t" * 2100)
+
+
+# ===========================================================================
+# R. Evaluate Captcha behaviour (executes node code via node CLI)
+# ===========================================================================
+@unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found")
+class TestEvaluateCaptchaBehaviour(unittest.TestCase):
+    """Executes Evaluate Captcha jsCode in node to verify outcome handling and privacy."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.js_code = jscode("Evaluate Captcha")
+
+    def _eval(self, status_code=None, body=None, lead=None):
+        if lead is None:
+            lead = {"name": "Jane", "email": "jane@example.com"}
+        input_item = {}
+        if status_code is not None:
+            input_item["statusCode"] = status_code
+        if body is not None:
+            input_item["body"] = body
+
+        script = (
+            f"const $input = {{ item: {{ json: {json.dumps(input_item)} }} }};\n"
+            f"const $ = (name) => ({{ item: {{ json: {{ lead: {json.dumps(lead)} }} }} }});\n"
+            f"const res = (function() {{\n{self.js_code}\n}})();\n"
+            f"console.log(JSON.stringify(res));\n"
+        )
+
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            raw = res.stdout.strip()
+            self.assertNotIn("203.0.113.9", raw, "Evaluate Captcha output must not contain IP")
+            self.assertNotIn("token", raw.lower(), "Evaluate Captcha output must not contain token")
+            self.assertNotIn('"reason"', raw, "Evaluate Captcha output must not contain 'reason' property")
+            return json.loads(raw)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_r01_status_200_verified_true_passes_lead(self):
+        lead = {"name": "Alice", "email": "alice@example.com"}
+        out = self._eval(status_code=200, body={"verified": True}, lead=lead)
+        item = out["json"]
+        self.assertTrue(item.get("ok"))
+        self.assertEqual(item.get("lead"), lead)
+
+    def test_r02_status_200_verified_false_returns_403_captcha_failed(self):
+        out = self._eval(status_code=200, body={"verified": False})
+        item = out["json"]
+        self.assertFalse(item.get("ok"))
+        self.assertEqual(item.get("httpStatus"), 403)
+        self.assertEqual(item.get("responseBody", {}).get("error"), "captcha_failed")
+
+    def test_r03_status_200_body_as_json_string(self):
+        out_true = self._eval(status_code=200, body='{"verified":true}')
+        self.assertTrue(out_true["json"].get("ok"))
+        out_false = self._eval(status_code=200, body='{"verified":false}')
+        self.assertFalse(out_false["json"].get("ok"))
+        self.assertEqual(out_false["json"].get("httpStatus"), 403)
+        self.assertEqual(out_false["json"].get("responseBody", {}).get("error"), "captcha_failed")
+
+    def test_r04_status_undefined_returns_503_captcha_unavailable(self):
+        out = self._eval(status_code=None, body=None)
+        item = out["json"]
+        self.assertFalse(item.get("ok"))
+        self.assertEqual(item.get("httpStatus"), 503)
+        self.assertEqual(item.get("responseBody", {}).get("error"), "captcha_unavailable")
+
+    def test_r05_statuses_500_502_401_422_return_503(self):
+        for code in (500, 502, 401, 422):
+            out = self._eval(status_code=code, body=None)
+            item = out["json"]
+            self.assertFalse(item.get("ok"), f"Expected ok:false for status {code}")
+            self.assertEqual(item.get("httpStatus"), 503, f"Expected 503 for status {code}")
+            self.assertEqual(item.get("responseBody", {}).get("error"), "captcha_unavailable")
+
+    def test_r06_status_200_with_empty_or_malformed_body_returns_503(self):
+        for malformed in ({}, {"verified": "true"}, "not a json string"):
+            out = self._eval(status_code=200, body=malformed)
+            item = out["json"]
+            self.assertFalse(item.get("ok"), f"Expected ok:false for {malformed!r}")
+            self.assertEqual(item.get("httpStatus"), 503, f"Expected 503 for {malformed!r}")
+            self.assertEqual(item.get("responseBody", {}).get("error"), "captcha_unavailable")
 
 
 if __name__ == "__main__":

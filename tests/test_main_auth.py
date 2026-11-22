@@ -224,3 +224,25 @@ class TestMainAuth(unittest.TestCase):
                 self.assertEqual(resp_success.status_code, 200)
                 mock_exchange.assert_called_once_with("mock_code_123")
                 self.assertIn("Authorization successful", resp_success.json().get("message", ""))
+
+    # -----------------------------------------------------------------------
+    # (g) /captcha/verify endpoint behavior
+    # -----------------------------------------------------------------------
+
+    def test_captcha_verify_auth_with_key_200_and_without_key_401(self) -> None:
+        """POST /captcha/verify returns 200 with valid key and mocked verify_token; 401 without key."""
+        mock_result = {"verified": True, "reason": "ok", "error_codes": []}
+        with patch.dict(os.environ, {"API_SECRET_KEY": _SECRET_40}, clear=True):
+            # Without API key -> 401
+            resp_unauth = self.client.post("/captcha/verify", json={"token": "tok"})
+            self.assertEqual(resp_unauth.status_code, 401)
+
+            # With API key and patched verify_token -> 200
+            with patch("routers.captcha.verify_token", return_value=mock_result):
+                resp_auth = self.client.post(
+                    "/captcha/verify",
+                    headers=self.headers,
+                    json={"token": "tok"},
+                )
+                self.assertEqual(resp_auth.status_code, 200)
+                self.assertTrue(resp_auth.json().get("verified"))
