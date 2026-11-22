@@ -19,6 +19,7 @@ import uuid
 import openai
 
 from models import LeadInput, LeadRecord
+from services.fallback_scoring import fallback_score
 from services.gmail_service import EmailSendError, send_email
 from services.hubspot_service import CRMError, contact_from_record, upsert_contact
 from services.llm_service import generate_email, generate_sms, score_lead
@@ -128,8 +129,9 @@ class PipelineResult:
 class PipelineDeps:
     """All collaborators required by :func:`run_pipeline`.
 
-    There are intentionally no defaults: tests and alternate runtimes can pass
-    fully controlled collaborators, while production uses :func:`_default_deps`.
+    All collaborators except fallback_score are required: tests and alternate
+    runtimes can pass fully controlled collaborators, while production uses
+    :func:`_default_deps`.
     """
 
     normalize_phone: typing.Callable[[object], typing.Any]
@@ -142,6 +144,7 @@ class PipelineDeps:
     send_sms: typing.Callable[[typing.Any], object]
     contact_from_record: typing.Callable[[LeadRecord], typing.Any]
     upsert_contact: typing.Callable[[typing.Any], object]
+    fallback_score: typing.Callable[[LeadInput], typing.Any] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +169,7 @@ def _default_deps() -> PipelineDeps:
         send_sms=send_sms,
         contact_from_record=contact_from_record,
         upsert_contact=upsert_contact,
+        fallback_score=fallback_score,
     )
 
 
@@ -514,6 +518,7 @@ def run_pipeline(
     *,
     lead_id: str | None = None,
     deps: PipelineDeps | None = None,
+    allow_fallback_score: bool = False,
 ) -> PipelineResult:
     """Run one lead through intake, scoring, storage, and outbound delivery.
 
@@ -570,45 +575,65 @@ def run_pipeline(
 
     score_started_at = time.perf_counter()
     fresh_score: typing.Any | None = None
+    score_reason = "scored"
     try:
         fresh_score = active_deps.score_lead(intake_lead)
     except Exception as exc:
         error, retryable = _classify(exc, "score", "score")
-        steps.append(
-            _failed_step(
-                canonical_lead_id,
-                "score",
-                error.category,
-                error,
-                retryable,
-                score_started_at,
-                error_name=type(exc).__name__,
+        if allow_fallback_score and error.category in ("transient", "model_output"):
+            try:
+                scorer = (
+                    active_deps.fallback_score
+                    if active_deps.fallback_score is not None
+                    else fallback_score
+                )
+                fresh_score = scorer(intake_lead)
+                score_reason = "scored_fallback"
+                logger.warning(
+                    "pipeline score fell back to rules: lead_id=%s category=%s error=%s",
+                    canonical_lead_id,
+                    error.category,
+                    type(exc).__name__,
+                )
+            except Exception:
+                fresh_score = None
+
+        if fresh_score is None:
+            steps.append(
+                _failed_step(
+                    canonical_lead_id,
+                    "score",
+                    error.category,
+                    error,
+                    retryable,
+                    score_started_at,
+                    error_name=type(exc).__name__,
+                )
             )
-        )
-        steps.extend(
-            [
-                _skipped_step("store", "upstream_failed", time.perf_counter()),
-                _skipped_step("email", "upstream_failed", time.perf_counter()),
-                _skipped_step("sms", "upstream_failed", time.perf_counter()),
-                _skipped_step("crm", "upstream_failed", time.perf_counter()),
-            ]
-        )
-        return _build_pipeline_result(
-            canonical_lead_id,
-            idempotency_key_generated,
-            steps,
-            created=None,
-            stored=None,
-            fresh_score=None,
-            repair=repair,
-            failed_step="score",
-        )
+            steps.extend(
+                [
+                    _skipped_step("store", "upstream_failed", time.perf_counter()),
+                    _skipped_step("email", "upstream_failed", time.perf_counter()),
+                    _skipped_step("sms", "upstream_failed", time.perf_counter()),
+                    _skipped_step("crm", "upstream_failed", time.perf_counter()),
+                ]
+            )
+            return _build_pipeline_result(
+                canonical_lead_id,
+                idempotency_key_generated,
+                steps,
+                created=None,
+                stored=None,
+                fresh_score=None,
+                repair=repair,
+                failed_step="score",
+            )
 
     steps.append(
         StepResult(
             name="score",
             status="succeeded",
-            reason="scored",
+            reason=score_reason,
             duration_ms=_duration_ms(score_started_at),
         )
     )
