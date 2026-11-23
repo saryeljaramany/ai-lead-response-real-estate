@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, StrictBool, model_validator
 
 from models import LeadInput, LeadRecord
 from services.pipeline_service import process_lead
@@ -163,12 +163,14 @@ class ProcessLeadRequest(BaseModel):
                     "budget": "$450k-$550k",
                     "timeline": "within 3 months",
                 },
+                "allow_fallback_score": False,
             }
         }
     }
 
     id: UUID | None = None
     lead: LeadInput
+    allow_fallback_score: StrictBool = False
 
 
 class StepErrorModel(BaseModel):
@@ -257,16 +259,20 @@ def process_lead_endpoint(
 
     The optional ``id`` is the idempotency key. Send the SAME id on every
     retry. If omitted, one is generated and returned; retrying without it
-    creates a new lead. Dry-run steps are reported as skipped and never mark
-    flags. Cold leads are persisted but receive no email, SMS, or CRM sync.
-    A step whose reason is ``flag_update_failed`` needs the PATCH action in
-    ``repair``, not a pipeline retry, because retrying would resend the
-    external message.
+    creates a new lead. The optional ``allow_fallback_score`` flag is intended
+    for the final retry only. When true, a rule-based fallback score replaces
+    transient AI scoring failures or model output errors so the lead can still
+    be stored and routed; configuration errors never fall back. Dry-run steps
+    are reported as skipped and never mark flags. Cold leads are persisted but
+    receive no email, SMS, or CRM sync. A step whose reason is
+    ``flag_update_failed`` needs the PATCH action in ``repair``, not a
+    pipeline retry, because retrying would resend the external message.
     """
     try:
         result = process_lead(
             request.lead,
             lead_id=str(request.id) if request.id else None,
+            allow_fallback_score=request.allow_fallback_score,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

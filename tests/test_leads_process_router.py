@@ -256,5 +256,58 @@ class TestLeadsRouterRegressionAndContract(unittest.TestCase):
         self.assertFalse(inspect.iscoroutinefunction(leads_router.process_lead_endpoint))
 
 
+class TestProcessLeadFallbackFlag(unittest.TestCase):
+    """6. Validation and forwarding of allow_fallback_score flag."""
+
+    def setUp(self):
+        self.client = _build_test_client()
+        self.payload = _valid_request_payload()
+
+    def test_allow_fallback_score_defaults_to_false(self):
+        result = _build_sample_pipeline_result(status="completed")
+        with patch("routers.leads.process_lead", return_value=result) as mock_process:
+            resp = self.client.post("/leads/process", json=self.payload)
+
+        self.assertEqual(resp.status_code, 200)
+        mock_process.assert_called_once()
+        _, kwargs = mock_process.call_args
+        self.assertIn("allow_fallback_score", kwargs)
+        self.assertIs(kwargs["allow_fallback_score"], False)
+
+    def test_allow_fallback_score_passed_as_true(self):
+        result = _build_sample_pipeline_result(status="completed")
+        payload = dict(self.payload)
+        payload["allow_fallback_score"] = True
+        with patch("routers.leads.process_lead", return_value=result) as mock_process:
+            resp = self.client.post("/leads/process", json=payload)
+
+        self.assertEqual(resp.status_code, 200)
+        mock_process.assert_called_once()
+        _, kwargs = mock_process.call_args
+        self.assertIn("allow_fallback_score", kwargs)
+        self.assertIs(kwargs["allow_fallback_score"], True)
+
+    def test_invalid_types_for_allow_fallback_score_return_422(self):
+        for bad_val in ("yes", 1, "true"):
+            with self.subTest(bad_val=bad_val):
+                payload = dict(self.payload)
+                payload["allow_fallback_score"] = bad_val
+                with patch("routers.leads.process_lead") as mock_process:
+                    resp = self.client.post("/leads/process", json=payload)
+
+                self.assertEqual(resp.status_code, 422)
+                mock_process.assert_not_called()
+
+    def test_openapi_schema_lists_allow_fallback_score_as_boolean(self):
+        app = FastAPI()
+        app.include_router(leads_router.router)
+        schema = app.openapi()
+        schemas = schema.get("components", {}).get("schemas", {})
+        req_schema = schemas.get("ProcessLeadRequest", {})
+        props = req_schema.get("properties", {})
+        self.assertIn("allow_fallback_score", props)
+        self.assertEqual(props["allow_fallback_score"].get("type"), "boolean")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -442,6 +442,11 @@ class TestDCallPipeline(unittest.TestCase):
         body = self.params.get("jsonBody", "")
         self.assertIn("id", body, "jsonBody must reference 'id'")
         self.assertIn("lead", body, "jsonBody must reference 'lead'")
+        self.assertIn("allow_fallback_score", body, "jsonBody must reference 'allow_fallback_score'")
+        self.assertIn("attempt", body, "jsonBody must reference 'attempt'")
+        self.assertIn("maxAttempts", body, "jsonBody must reference 'maxAttempts'")
+        self.assertNotIn("captcha", body.lower(), "jsonBody must not contain 'captcha'")
+        self.assertNotIn("remoteip", body.lower(), "jsonBody must not contain 'remoteIp'")
 
     def test_d05_timeout_300000(self):
         self.assertEqual(self.opts.get("timeout"), 300000,
@@ -1267,6 +1272,14 @@ class TestNFixes(unittest.TestCase):
             "Build Slack Success must NOT read s.dryRun (replaced by per-step dryCount logic)"
         )
 
+    def test_n04_slack_fallback_markers(self):
+        code_s = jscode("Build Slack Success")
+        self.assertIn("scored_fallback", code_s)
+        self.assertIn("AI scoring unavailable: rule-based score", code_s)
+        code_a = jscode("Build Slack Alert")
+        self.assertIn("scored_fallback", code_a)
+        self.assertIn("Score: rule-based fallback (the AI was unavailable on the final attempt).", code_a)
+
 
 class TestOApiKeyContract(unittest.TestCase):
     """Verify backend API key contract across nodes, compose, and env example."""
@@ -1661,6 +1674,279 @@ class TestEvaluateCaptchaBehaviour(unittest.TestCase):
             self.assertFalse(item.get("ok"), f"Expected ok:false for {malformed!r}")
             self.assertEqual(item.get("httpStatus"), 503, f"Expected 503 for {malformed!r}")
             self.assertEqual(item.get("responseBody", {}).get("error"), "captcha_unavailable")
+
+
+# ===========================================================================
+# S. Call Pipeline expression behaviour (executes node code via node CLI)
+# ===========================================================================
+@unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found")
+class TestCallPipelineExpressionBehaviour(unittest.TestCase):
+    """Executes Call Pipeline jsonBody expression via node CLI."""
+
+    @classmethod
+    def setUpClass(cls):
+        raw_body = node_by_name("Call Pipeline").get("parameters", {}).get("jsonBody", "")
+        body_expr = raw_body.strip()
+        if body_expr.startswith("={{"):
+            body_expr = body_expr[3:]
+        if body_expr.endswith("}}"):
+            body_expr = body_expr[:-2]
+        cls.body_expr = body_expr.strip()
+
+    def _eval(self, attempt, max_attempts=3):
+        json_obj = {
+            "id": "i",
+            "lead": {"name": "n"},
+            "attempt": attempt,
+            "maxAttempts": max_attempts,
+        }
+        script = (
+            f"const $json = {json.dumps(json_obj)};\n"
+            f"const res = {self.body_expr};\n"
+            f"console.log(res);\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            raw = res.stdout.strip()
+            return json.loads(raw)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_s01_attempt_1_allow_fallback_false(self):
+        out = self._eval(attempt=1, max_attempts=3)
+        self.assertEqual(set(out.keys()), {"id", "lead", "allow_fallback_score"})
+        self.assertIs(out["allow_fallback_score"], False)
+        self.assertEqual(out["id"], "i")
+        self.assertEqual(out["lead"], {"name": "n"})
+        self.assertIsInstance(out["allow_fallback_score"], bool)
+
+    def test_s02_attempt_2_allow_fallback_false(self):
+        out = self._eval(attempt=2, max_attempts=3)
+        self.assertEqual(set(out.keys()), {"id", "lead", "allow_fallback_score"})
+        self.assertIs(out["allow_fallback_score"], False)
+        self.assertIsInstance(out["allow_fallback_score"], bool)
+
+    def test_s03_attempt_3_allow_fallback_true(self):
+        out = self._eval(attempt=3, max_attempts=3)
+        self.assertEqual(set(out.keys()), {"id", "lead", "allow_fallback_score"})
+        self.assertIs(out["allow_fallback_score"], True)
+        self.assertIsInstance(out["allow_fallback_score"], bool)
+
+
+# ===========================================================================
+# T. Build Slack Success & Build Slack Alert behaviour (executes via node CLI)
+# ===========================================================================
+@unittest.skipUnless(_NODE_HAS_NODE_CLI, "node CLI not found")
+class TestSlackMessageBehaviour(unittest.TestCase):
+    """Executes Build Slack Success and Build Slack Alert jsCode in node."""
+
+    CANARY_LEAD = {
+        "name": "CANARY_NAME_XYZ",
+        "email": "canary_email@example.com",
+        "phone": "+19999999999",
+        "message": "CANARY_SECRET_MESSAGE_XYZ",
+        "property_type": "House",
+        "preferred_location": "Downtown",
+        "budget": "$500,000",
+        "timeline": "ASAP",
+    }
+    CANARY_TOKENS = (
+        "CANARY_NAME_XYZ",
+        "canary_email@example.com",
+        "+19999999999",
+        "CANARY_SECRET_MESSAGE_XYZ",
+    )
+
+    @classmethod
+    def setUpClass(cls):
+        cls.success_code = jscode("Build Slack Success")
+        cls.alert_code = jscode("Build Slack Alert")
+
+    def _eval_success(self, state):
+        script = (
+            f"const $input = {{ item: {{ json: {json.dumps(state)} }} }};\n"
+            f"const res = (function() {{\n{self.success_code}\n}})();\n"
+            f"console.log(JSON.stringify(res));\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            out = json.loads(res.stdout.strip())
+            text = out.get("json", {}).get("slackPayload", {}).get("text", "")
+            for token in self.CANARY_TOKENS:
+                self.assertNotIn(token, text, f"Canary token {token!r} leaked into Slack Success message")
+            return text
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def _eval_alert(self, state, workflow_id="wf_123", execution_id="ex_456", editor_base="http://localhost:5678"):
+        script = (
+            f"const $input = {{ item: {{ json: {json.dumps(state)} }} }};\n"
+            f"const $workflow = {{ id: {json.dumps(workflow_id)} }};\n"
+            f"const $execution = {{ id: {json.dumps(execution_id)} }};\n"
+            f"const $env = {{ N8N_EDITOR_BASE_URL: {json.dumps(editor_base)} }};\n"
+            f"const res = (function() {{\n{self.alert_code}\n}})();\n"
+            f"console.log(JSON.stringify(res));\n"
+        )
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".js", delete=False, encoding="utf-8"
+        ) as f:
+            f.write(script)
+            tmp_path = f.name
+        try:
+            res = subprocess.run(
+                ["node", tmp_path],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            out = json.loads(res.stdout.strip())
+            text = out.get("json", {}).get("slackPayload", {}).get("text", "")
+            for token in self.CANARY_TOKENS:
+                self.assertNotIn(token, text, f"Canary token {token!r} leaked into Slack Alert message")
+            return text
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    def test_t01_success_with_fallback_score_contains_marker(self):
+        state = {
+            "id": "lead-001",
+            "category": "hot",
+            "score": 88,
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored_fallback"},
+                {"name": "email", "status": "succeeded", "reason": "sent"},
+                {"name": "sms", "status": "succeeded", "reason": "sent"},
+                {"name": "crm", "status": "succeeded", "reason": "created"},
+            ],
+        }
+        text = self._eval_success(state)
+        self.assertIn("AI scoring unavailable: rule-based score", text)
+        self.assertNotIn("DRY RUN", text)
+
+    def test_t02_success_with_regular_score_does_not_contain_marker(self):
+        state = {
+            "id": "lead-002",
+            "category": "hot",
+            "score": 88,
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored"},
+                {"name": "email", "status": "succeeded", "reason": "sent"},
+                {"name": "sms", "status": "succeeded", "reason": "sent"},
+                {"name": "crm", "status": "succeeded", "reason": "created"},
+            ],
+        }
+        text = self._eval_success(state)
+        self.assertNotIn("AI scoring unavailable", text)
+        self.assertNotIn("DRY RUN", text)
+
+    def test_t03_success_all_dry_run_marker(self):
+        state = {
+            "id": "lead-003",
+            "category": "hot",
+            "score": 75,
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored"},
+                {"name": "email", "status": "succeeded", "reason": "dry_run"},
+                {"name": "sms", "status": "succeeded", "reason": "dry_run"},
+                {"name": "crm", "status": "succeeded", "reason": "dry_run"},
+            ],
+        }
+        text = self._eval_success(state)
+        self.assertIn("_[DRY RUN: nothing was sent]_", text)
+        self.assertNotIn("AI scoring unavailable", text)
+
+    def test_t04_success_mixed_dry_run_marker(self):
+        state = {
+            "id": "lead-004",
+            "category": "hot",
+            "score": 75,
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored"},
+                {"name": "email", "status": "succeeded", "reason": "sent"},
+                {"name": "sms", "status": "succeeded", "reason": "dry_run"},
+                {"name": "crm", "status": "succeeded", "reason": "created"},
+            ],
+        }
+        text = self._eval_success(state)
+        self.assertIn("_[DRY RUN: some steps not sent]_", text)
+        self.assertNotIn("AI scoring unavailable", text)
+
+    def test_t05_success_both_markers_together(self):
+        state = {
+            "id": "lead-005",
+            "category": "hot",
+            "score": 75,
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored_fallback"},
+                {"name": "email", "status": "succeeded", "reason": "dry_run"},
+                {"name": "sms", "status": "succeeded", "reason": "dry_run"},
+                {"name": "crm", "status": "succeeded", "reason": "dry_run"},
+            ],
+        }
+        text = self._eval_success(state)
+        self.assertIn("_[DRY RUN: nothing was sent]_", text)
+        self.assertIn("_[AI scoring unavailable: rule-based score]_", text)
+
+    def test_t06_alert_with_fallback_step_contains_marker(self):
+        state = {
+            "id": "lead-006",
+            "attempt": 3,
+            "maxAttempts": 3,
+            "httpStatus": 500,
+            "reason": "retries_exhausted",
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored_fallback"},
+            ],
+            "failedSteps": [
+                {"name": "crm", "category": "downstream_unavailable", "retryable": True}
+            ],
+        }
+        text = self._eval_alert(state)
+        self.assertIn("Score: rule-based fallback (the AI was unavailable on the final attempt).", text)
+
+    def test_t07_alert_without_fallback_step_does_not_contain_marker(self):
+        state = {
+            "id": "lead-007",
+            "attempt": 3,
+            "maxAttempts": 3,
+            "httpStatus": 500,
+            "reason": "retries_exhausted",
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored"},
+            ],
+            "failedSteps": [
+                {"name": "crm", "category": "downstream_unavailable", "retryable": True}
+            ],
+        }
+        text = self._eval_alert(state)
+        self.assertNotIn("rule-based fallback", text)
 
 
 if __name__ == "__main__":
