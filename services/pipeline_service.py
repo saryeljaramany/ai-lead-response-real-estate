@@ -629,6 +629,7 @@ def run_pipeline(
                 failed_step="score",
             )
 
+    score_step_idx = len(steps)
     steps.append(
         StepResult(
             name="score",
@@ -681,6 +682,12 @@ def run_pipeline(
             duration_ms=_duration_ms(store_started_at),
         )
     )
+    if created is False and steps[score_step_idx].reason == "scored_fallback":
+        # The stored record wins, so the fresh fallback score was discarded.
+        steps[score_step_idx] = dataclasses.replace(
+            steps[score_step_idx],
+            reason="scored_fallback_unused",
+        )
 
     email_result, stored, email_repair = _run_outbound_step(
         "email",

@@ -1948,6 +1948,41 @@ class TestSlackMessageBehaviour(unittest.TestCase):
         text = self._eval_alert(state)
         self.assertNotIn("rule-based fallback", text)
 
+    def test_t08_success_with_scored_fallback_unused_does_not_contain_marker(self):
+        state = {
+            "id": "lead-008",
+            "category": "hot",
+            "score": 88,
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored_fallback_unused"},
+                {"name": "email", "status": "succeeded", "reason": "sent"},
+                {"name": "sms", "status": "succeeded", "reason": "sent"},
+                {"name": "crm", "status": "succeeded", "reason": "created"},
+            ],
+        }
+        text = self._eval_success(state)
+        self.assertNotIn("AI scoring unavailable", text)
+        self.assertNotIn("DRY RUN", text)
+
+    def test_t09_alert_with_scored_fallback_unused_does_not_contain_marker(self):
+        state = {
+            "id": "lead-009",
+            "attempt": 3,
+            "maxAttempts": 3,
+            "httpStatus": 500,
+            "reason": "retries_exhausted",
+            "lead": self.CANARY_LEAD,
+            "steps": [
+                {"name": "score", "status": "succeeded", "reason": "scored_fallback_unused"},
+            ],
+            "failedSteps": [
+                {"name": "crm", "category": "downstream_unavailable", "retryable": True}
+            ],
+        }
+        text = self._eval_alert(state)
+        self.assertNotIn("rule-based fallback", text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
