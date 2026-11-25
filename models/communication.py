@@ -72,6 +72,9 @@ class EmailPayload(BaseModel):
     @classmethod
     def validate_subject(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("subject must not be empty or whitespace only")
@@ -81,6 +84,9 @@ class EmailPayload(BaseModel):
     @classmethod
     def validate_body(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("body must not be empty or whitespace only")
@@ -146,6 +152,9 @@ class SMSPayload(BaseModel):
         Strip surrounding whitespace; enforce a minimum length of 7 characters
         to filter out obviously invalid numbers while remaining format-agnostic.
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if len(stripped) < 7:
             raise ValueError(
@@ -161,6 +170,9 @@ class SMSPayload(BaseModel):
         single-segment SMS limit of 160 characters to prevent silent splitting
         or truncation by the Twilio gateway.
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("message must not be empty or whitespace only")
@@ -245,6 +257,9 @@ class HubSpotContact(BaseModel):
     @classmethod
     def validate_firstname(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("firstname must not be empty or whitespace only")
@@ -254,6 +269,9 @@ class HubSpotContact(BaseModel):
     @classmethod
     def validate_lastname(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("lastname must not be empty or whitespace only")
@@ -277,6 +295,9 @@ class HubSpotContact(BaseModel):
         Accepts case-insensitive input ("Hot", "HOT", etc.) and always stores
         as lowercase so HubSpot property comparisons are consistent.
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         normalised = v.strip().lower()
         allowed = {"hot", "warm", "cold"}
         if normalised not in allowed:

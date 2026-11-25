@@ -79,6 +79,9 @@ class LeadInput(BaseModel):
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("name must not be empty or whitespace only")
@@ -92,6 +95,9 @@ class LeadInput(BaseModel):
         to filter out obviously invalid numbers while remaining format-agnostic
         (supports local, national, and E.164 international formats).
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if len(stripped) < 7:
             raise ValueError(
@@ -103,6 +109,9 @@ class LeadInput(BaseModel):
     @classmethod
     def validate_message(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("message must not be empty or whitespace only")
@@ -186,6 +195,9 @@ class LeadScore(BaseModel):
         Normalise to lowercase and restrict to allowed priority levels.
         Accepts case-insensitive input and always stores as lowercase.
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         normalised = v.strip().lower()
         allowed = {"urgent", "normal", "low"}
         if normalised not in allowed:
