@@ -2,7 +2,7 @@ name: lead-n8n
 
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n:${N8N_IMAGE_TAG:-latest}
+    image: docker.n8n.io/n8nio/n8n:${N8N_IMAGE_TAG:-2.47.7}
     container_name: n8n-leads
     restart: unless-stopped
     ports:
