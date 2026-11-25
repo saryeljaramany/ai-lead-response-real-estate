@@ -246,7 +246,7 @@ class TestPipelineFallbackScoring(unittest.TestCase):
         self.assertEqual(res2.score, 87)
         self.assertEqual(res2.category, "hot")
         score_step = next(s for s in res2.steps if s.name == "score")
-        self.assertEqual(score_step.reason, "scored_fallback")
+        self.assertEqual(score_step.reason, "scored_fallback_unused")
 
         for outbound in ("email", "sms", "crm"):
             step = next(s for s in res2.steps if s.name == outbound)
@@ -330,6 +330,72 @@ class TestPipelineFallbackScoring(unittest.TestCase):
         fallback_keys = set(res_fallback.to_dict().keys())
 
         self.assertEqual(normal_keys, fallback_keys)
+
+    def test_fallback_score_reason_created_vs_existing(self):
+        """Fallback score reason is scored_fallback on insert, scored_fallback_unused on conflict."""
+        # Branch A: created=True -> reason is scored_fallback
+        store_a = FakeStore()
+        deps_a = make_deps(
+            store=store_a,
+            score_lead=MagicMock(side_effect=make_rate_limit_error()),
+        )
+        lead_a = make_sample_lead()
+        res_a = run_pipeline(lead_a, deps=deps_a, allow_fallback_score=True)
+        self.assertIs(res_a.created, True)
+        score_step_a = next(s for s in res_a.steps if s.name == "score")
+        self.assertEqual(score_step_a.reason, "scored_fallback")
+
+        # Branch B: created=False -> reason is scored_fallback_unused
+        store_b = FakeStore()
+        lead_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        lead_b = make_sample_lead()
+        deps_b1 = make_deps(store=store_b)
+        res_b1 = run_pipeline(lead_b, lead_id=lead_id, deps=deps_b1, allow_fallback_score=False)
+        self.assertIs(res_b1.created, True)
+
+        deps_b2 = make_deps(
+            store=store_b,
+            score_lead=MagicMock(side_effect=make_rate_limit_error()),
+        )
+        res_b2 = run_pipeline(lead_b, lead_id=lead_id, deps=deps_b2, allow_fallback_score=True)
+        self.assertIs(res_b2.created, False)
+        score_step_b = next(s for s in res_b2.steps if s.name == "score")
+        self.assertEqual(score_step_b.reason, "scored_fallback_unused")
+
+    def test_existing_record_with_normal_ai_score_keeps_scored_reason(self):
+        """A conflict (created=False) with a normal AI score keeps score reason 'scored'."""
+        store = FakeStore()
+        lead_id = "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+        lead = make_sample_lead()
+
+        deps1 = make_deps(store=store)
+        res1 = run_pipeline(lead, lead_id=lead_id, deps=deps1)
+        self.assertIs(res1.created, True)
+
+        deps2 = make_deps(store=store)
+        res2 = run_pipeline(lead, lead_id=lead_id, deps=deps2)
+        self.assertIs(res2.created, False)
+        score_step = next(s for s in res2.steps if s.name == "score")
+        self.assertEqual(score_step.status, "succeeded")
+        self.assertEqual(score_step.reason, "scored")
+
+    def test_fallback_followed_by_store_failure_keeps_scored_fallback_reason(self):
+        """When fallback scoring succeeds but store fails, score stays 'scored_fallback'."""
+        store = FakeStore()
+        store.fail_next(pipeline_service.LeadStoreError("db timeout", category="transient"))
+        deps = make_deps(
+            store=store,
+            score_lead=MagicMock(side_effect=make_rate_limit_error()),
+        )
+        lead = make_sample_lead()
+        result = run_pipeline(lead, deps=deps, allow_fallback_score=True)
+
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.failed_step, "store")
+        self.assertFalse(result.persisted)
+        score_step = next(s for s in result.steps if s.name == "score")
+        self.assertEqual(score_step.status, "succeeded")
+        self.assertEqual(score_step.reason, "scored_fallback")
 
     def test_pipeline_service_source_hygiene(self):
         """pipeline_service.py must be pure ASCII and contain no os.getenv or os.environ."""

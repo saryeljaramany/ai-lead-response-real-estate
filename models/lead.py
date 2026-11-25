@@ -33,9 +33,12 @@ class LeadInput(BaseModel):
     downstream service (AI scoring, CRM, etc.).
 
     Role in the system:
-        - Received by POST /leads as the request body.
+        - Received as the request body of POST /ai/score-lead and nested
+          under "lead" in POST /leads/process (as well as inside
+          POST /ai/generate-email, POST /ai/generate-sms, and POST /leads/store).
         - Embedded inside LeadRecord after scoring.
-        - Never mutated after creation; treat as immutable downstream.
+        - Treated as immutable downstream; when the pipeline normalises the
+          phone number, it creates a modified copy via model_copy.
     """
 
     model_config = ConfigDict(
@@ -76,6 +79,9 @@ class LeadInput(BaseModel):
     @classmethod
     def validate_name(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("name must not be empty or whitespace only")
@@ -89,6 +95,9 @@ class LeadInput(BaseModel):
         to filter out obviously invalid numbers while remaining format-agnostic
         (supports local, national, and E.164 international formats).
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if len(stripped) < 7:
             raise ValueError(
@@ -100,6 +109,9 @@ class LeadInput(BaseModel):
     @classmethod
     def validate_message(cls, v: str) -> str:
         """Strip surrounding whitespace; reject if the result is empty."""
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         stripped = v.strip()
         if not stripped:
             raise ValueError("message must not be empty or whitespace only")
@@ -121,9 +133,11 @@ class LeadScore(BaseModel):
     normalised values.
 
     Role in the system:
-        - Produced exclusively by services/ai_scorer.py.
+        - Produced by services/llm_service.score_lead, or by
+          services/fallback_scoring.fallback_score as a last resort.
         - Embedded inside LeadRecord alongside the originating LeadInput.
-        - Consumed by routers and CRM integration to drive automated actions.
+        - Consumed by services/pipeline_service and services/supabase_service
+          to drive persistence and automated outbound actions.
     """
 
     model_config = ConfigDict(
@@ -181,6 +195,9 @@ class LeadScore(BaseModel):
         Normalise to lowercase and restrict to allowed priority levels.
         Accepts case-insensitive input and always stores as lowercase.
         """
+        # Let Pydantic's str validation report non-string types as a 422 error.
+        if not isinstance(v, str):
+            return v
         normalised = v.strip().lower()
         allowed = {"urgent", "normal", "low"}
         if normalised not in allowed:
@@ -204,13 +221,12 @@ class LeadRecord(BaseModel):
     action taken on the lead (email, SMS, HubSpot sync).
 
     Role in the system:
-        - Written to the database by services/storage.py immediately after
-          AI scoring completes.
-        - Returned by GET /leads/{id} as the authoritative lead view.
-        - Read by services/hubspot.py, services/email.py, and
-          services/sms.py to dispatch communications idempotently.
+        - Written to the database by services/supabase_service.store_lead
+          immediately after scoring completes.
+        - Returned by GET /leads/{lead_id} as the authoritative lead view.
         - The boolean flags (email_sent, sms_sent, hubspot_created) act
-          as idempotency guards; services must check these before acting.
+          as idempotency guards consulted by services/pipeline_service
+          before the email, SMS, and CRM steps.
     """
 
     model_config = ConfigDict(

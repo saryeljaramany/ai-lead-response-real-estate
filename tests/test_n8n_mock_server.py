@@ -221,7 +221,8 @@ class TestMockServer(unittest.TestCase):
         self.assertEqual(st_v, 422)
         d_v = json.loads(b_v)
         self.assertIn("detail", d_v)
-        self.assertEqual(d_v["detail"][0]["input"], "bad_email_format")
+        self.assertNotIn("input", d_v["detail"][0])
+        self.assertNotIn("bad_email_format", b_v)
 
     def test_per_id_call_counting(self):
         id_a = str(uuid.uuid4())
@@ -352,7 +353,7 @@ class TestMockServer(unittest.TestCase):
         self.assertNotIn("buyer@example.com", serialized_proc)
         self.assertNotIn("+15125550199", serialized_proc)
 
-    def test_422_echoes_input_while_log_does_not(self):
+    def test_422_does_not_echo_input(self):
         canary = "canary_private_data@example.com"
         payload = self._make_lead_payload("validation-422", email=canary)
 
@@ -360,7 +361,8 @@ class TestMockServer(unittest.TestCase):
         self.assertEqual(st, 422)
         data = json.loads(body)
         self.assertIn("detail", data)
-        self.assertEqual(data["detail"][0]["input"], canary)
+        self.assertNotIn("input", data["detail"][0])
+        self.assertNotIn(canary, body)
 
         # GET /_log must not contain the canary input
         st_log, log_body = self._request("GET", "/_log")
@@ -385,6 +387,8 @@ class TestMockServer(unittest.TestCase):
         d1 = json.loads(b1)
         locs1 = [err["loc"] for err in d1["detail"]]
         self.assertIn(["body", "id"], locs1)
+        for err in d1["detail"]:
+            self.assertNotIn("input", err)
 
         # Invalid UUID id
         st2, b2 = self._request(
@@ -398,6 +402,9 @@ class TestMockServer(unittest.TestCase):
         self.assertEqual(st2, 422)
         d2 = json.loads(b2)
         self.assertEqual(d2["detail"][0]["msg"], "value is not a valid uuid")
+        for err in d2["detail"]:
+            self.assertNotIn("input", err)
+        self.assertNotIn("not-a-valid-uuid", b2)
 
         # Missing name in lead
         uid = str(uuid.uuid4())
@@ -417,6 +424,9 @@ class TestMockServer(unittest.TestCase):
         d3 = json.loads(b3)
         locs3 = [err["loc"] for err in d3["detail"]]
         self.assertIn(["body", "lead", "name"], locs3)
+        for err in d3["detail"]:
+            self.assertNotIn("input", err)
+        self.assertNotIn("test@example.com", b3)
 
     def test_drop_connection(self):
         payload = self._make_lead_payload("drop-connection")

@@ -1,7 +1,10 @@
 # =============================================================================
 # Imports
 # =============================================================================
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 import os
 
@@ -29,6 +32,50 @@ app = FastAPI(
     description=APP_DESCRIPTION,
     dependencies=[Depends(require_api_key)],
 )
+
+
+# =============================================================================
+# EXCEPTION HANDLERS
+# =============================================================================
+_ALLOWED_VALIDATION_ERROR_KEYS = ("loc", "msg", "type")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """
+    Handle request validation errors without echoing raw input or context.
+
+    Purpose:
+        Replaces FastAPI's default 422 response payload with a sanitized list
+        of error dictionaries containing only ``"loc"``, ``"msg"``, and
+        ``"type"`` from each item of ``exc.errors()``, serialized through
+        ``fastapi.encoders.jsonable_encoder``.
+
+    Privacy & Serialization Rationale:
+        Pydantic v2 validation errors include ``"input"`` (which for a missing
+        nested field echoes the entire parent object, exposing lead PII such
+        as name, email, phone, and message), ``"ctx"`` (which can hold raw
+        values or non-JSON-serialisable objects such as ``ValueError``
+        instances), and ``"url"``. Whitelisting only ``"loc"``, ``"msg"``, and
+        ``"type"`` prevents lead PII echo and serialization errors. Note that
+        ``"msg"`` can still quote a short non-PII value (for example
+        ``got 'lukewarm'``); only ``input``, ``ctx``, ``url``, and any other
+        keys are removed.
+
+    Returns:
+        JSONResponse with status code 422 and ``{"detail": <sanitized list>}``.
+    """
+    sanitized = [
+        {key: error[key] for key in _ALLOWED_VALIDATION_ERROR_KEYS if key in error}
+        for error in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content={"detail": jsonable_encoder(sanitized)},
+    )
+
 
 # =============================================================================
 # REGISTER ROUTERS

@@ -685,20 +685,19 @@ class MockHandler(BaseHTTPRequestHandler):
         errors = []
         if req_id is None:
             errors.append(
-                {"loc": ["body", "id"], "msg": "field required", "input": None}
+                {"loc": ["body", "id"], "msg": "field required"}
             )
         elif not _is_valid_uuid(req_id):
             errors.append(
                 {
                     "loc": ["body", "id"],
                     "msg": "value is not a valid uuid",
-                    "input": req_id,
                 }
             )
 
         if lead is None or not isinstance(lead, dict):
             errors.append(
-                {"loc": ["body", "lead"], "msg": "field required", "input": lead}
+                {"loc": ["body", "lead"], "msg": "field required"}
             )
         else:
             for field in ("name", "email", "phone", "message"):
@@ -708,7 +707,6 @@ class MockHandler(BaseHTTPRequestHandler):
                         {
                             "loc": ["body", "lead", field],
                             "msg": "field required",
-                            "input": val,
                         }
                     )
 
@@ -803,7 +801,6 @@ class MockHandler(BaseHTTPRequestHandler):
                         {
                             "loc": ["body", "lead", "email"],
                             "msg": "value is not a valid email address",
-                            "input": lead.get("email"),
                         }
                     ]
                 },

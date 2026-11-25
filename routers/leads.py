@@ -7,7 +7,7 @@ from models import LeadInput, LeadRecord
 from services.pipeline_service import process_lead
 from services.supabase_service import LeadStoreError, get_lead, store_lead, update_flags
 
-# Note: This file will be expanded with CRUD operations and lead-specific logic in later phases.
+# HTTP routes for lead storage, pipeline execution, retrieval, and flag updates.
 router = APIRouter(prefix="/leads", tags=["Leads"])
 
 

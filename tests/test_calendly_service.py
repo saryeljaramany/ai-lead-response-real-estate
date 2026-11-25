@@ -376,6 +376,17 @@ class TestUtmCampaign(unittest.TestCase):
                     qs = parse_qs(urlsplit(url).query)
                     self.assertEqual(qs.get("utm_campaign"), [expected])
 
+    def test_utm_campaign_replaces_backslash(self):
+        lead = _make_lead()
+        with patch.dict(
+            os.environ,
+            {"CALENDLY_LINK": BASE, "CALENDLY_UTM_CAMPAIGN": "a\\b"},
+            clear=True,
+        ):
+            url = build_booking_link(lead, channel="email")
+            qs = parse_qs(urlsplit(url).query)
+            self.assertEqual(qs.get("utm_campaign"), ["a_b"])
+
 
 # ---------------------------------------------------------------------------
 # J. Base link with existing query parameters
