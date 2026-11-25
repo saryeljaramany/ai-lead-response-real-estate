@@ -238,7 +238,7 @@ def _clean_utm(value: object, default: str) -> str:
     """
     if not isinstance(value, str):
         return default
-    cleaned = re.sub(r"[^A-Za-z0-9_.\\-]+", "_", value).strip("_")
+    cleaned = re.sub(r"[^A-Za-z0-9_.\-]+", "_", value).strip("_")
     cleaned = cleaned[:_MAX_UTM_CHARS]
     return cleaned if cleaned else default
 
@@ -443,9 +443,6 @@ def build_booking_link(
     base = get_base_link()
     if base is None:
         return None
-    raw_name = getattr(lead, "name", "")
-    raw_email = getattr(lead, "email", "")
-    # Create a lightweight namespace so _compose_url can use getattr safely.
     return _compose_url(base, lead, channel, include_utm)
 
 
