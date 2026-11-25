@@ -25,16 +25,17 @@ class EmailPayload(BaseModel):
     """
     Represents all data required to compose and send a single email to a lead.
 
-    Passed directly into gmail_service.py after AI scoring is complete. The
-    service uses these fields to build the MIME message, authenticate with the
-    Gmail API, and dispatch the email. The optional calendly_link field is
-    injected into the body template when a booking link should be included.
+    Passed into gmail_service.py after AI scoring and copy generation are
+    complete. The service uses to_email, subject, and body to build the MIME
+    message, authenticate with the Gmail API, and dispatch the email. When a
+    booking link is configured, services/llm_service.generate_email injects
+    it into body before constructing EmailPayload.
 
     Role in the system:
         - Constructed in the lead processing pipeline once a LeadScore exists.
         - Handed to gmail_service.send_email(payload: EmailPayload).
-        - lead_score is not sent to the recipient; it is attached to service
-          logs and audit records for traceability.
+        - lead_score is carried for caller/audit context and is never sent
+          to the recipient.
     """
 
     model_config = ConfigDict(
@@ -57,11 +58,11 @@ class EmailPayload(BaseModel):
     )
 
     to_email: EmailStr          # Recipient email address — validated by pydantic EmailStr
-    to_name: str                # Recipient display name used in the email greeting
+    to_name: str                # Recipient display name
     subject: str                # Email subject line
-    body: str                   # Full plain-text (or HTML) body of the email
-    lead_score: int             # AI quality score [0-100]; used for logging, not sent to lead
-    calendly_link: str | None = None  # Optional booking URL injected into the body template
+    body: str                   # Full plain-text body of the email
+    lead_score: int             # AI quality score [0-100]; carried for audit context, not sent to lead
+    calendly_link: str | None = None  # Optional booking URL already injected into body by llm_service
 
     # ------------------------------------------------------------------
     # Validators
@@ -111,9 +112,10 @@ class SMSPayload(BaseModel):
     production logs.
 
     Role in the system:
-        - Constructed in the lead processing pipeline for high-priority leads.
+        - Constructed in the lead processing pipeline for non-cold (hot and
+          warm) leads.
         - Handed to twilio_service.send_sms(payload: SMSPayload).
-        - lead_score is used for logging and audit only; not transmitted.
+        - lead_score is carried for caller/audit context only; not transmitted.
     """
 
     model_config = ConfigDict(
@@ -129,9 +131,9 @@ class SMSPayload(BaseModel):
         }
     )
 
-    to_phone: str       # Destination phone number (E.164 format recommended, e.g. +14155550192)
+    to_phone: str       # Destination phone number (E.164 format required by twilio_service, e.g. +14155550192)
     message: str        # SMS body — must be non-empty and within the 160-character GSM-7 limit
-    lead_score: int     # AI quality score [0-100]; used for logging, not transmitted in the SMS
+    lead_score: int     # AI quality score [0-100]; carried for audit context, not transmitted in the SMS
 
     # ------------------------------------------------------------------
     # Validators
@@ -186,22 +188,29 @@ class SMSPayload(BaseModel):
 
 class HubSpotContact(BaseModel):
     """
-    Represents lead data formatted specifically for the HubSpot CRM API.
+    Represents lead data formatted for the HubSpot CRM service layer.
 
-    Field names align with HubSpot's standard contact properties so the
-    dictionary produced by model.model_dump() can be passed almost directly
-    to the HubSpot contacts API endpoint without a separate mapping layer.
-    The lead_status field maps to HubSpot's lifecycle stage / lead status
-    property and must be one of the system-defined buckets.
+    services/hubspot_service.py maps this model into the HubSpot batch-upsert
+    request body inside _build_properties and _build_payload (rather than
+    sending model.model_dump() directly):
+        - email travels as the upsert identifier (id + idProperty="email")
+          and is never placed in the properties dict.
+        - firstname, lastname, and phone are standard HubSpot properties.
+        - lead_score, lead_status, property_type, and preferred_location are
+          custom properties that must already exist in the HubSpot account.
+    lead_status maps to the custom lead_status property and must be one of
+    "hot", "warm", or "cold".
 
     Role in the system:
-        - Constructed in the lead processing pipeline after AI scoring.
-        - Handed to hubspot_service.create_contact(contact: HubSpotContact).
+        - Constructed in the lead processing pipeline after scoring.
+        - Handed to hubspot_service.upsert_contact(contact: HubSpotContact).
         - hubspot_created flag on LeadRecord is set to True after a successful
-          API call to prevent duplicate contact creation on retries.
+          API call to prevent duplicate contact upserts on retries.
 
     HubSpot API reference:
-        POST https://api.hubapi.com/crm/v3/objects/contacts
+        POST https://api.hubapi.com/crm/objects/{version}/contacts/batch/upsert
+        (built from _UPSERT_PATH with _API_VERSION = "2026-09" in
+        services/hubspot_service.py)
     """
 
     model_config = ConfigDict(

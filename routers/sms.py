@@ -87,16 +87,22 @@ class SMSSendResponse(BaseModel):
 def send_sms_endpoint(payload: SMSPayload) -> SMSSendResponse:
     """Send an SMS message via Twilio.
 
-    Accepts an :class:`~models.SMSPayload` request body describing the
-    recipient, message text, and optional send options, then delegates to
+    Accepts an :class:`~models.SMSPayload` request body and delegates to
     :func:`~services.twilio_service.send_sms` which owns all Twilio
-    interaction logic.
+    interaction logic.  ``to_phone`` is normalised to strict E.164 format by
+    the service, and dry-run mode is controlled solely by the
+    ``TWILIO_DRY_RUN`` environment variable.
 
     **What it receives**
-        A JSON body that conforms to ``SMSPayload``, including at minimum the
-        destination phone number (``to``) and the message body (``body``).
-        Optional fields such as ``dry_run`` and ``from_`` may be provided to
-        override defaults.
+        A JSON body conforming to ``SMSPayload`` with required fields:
+
+        * ``to_phone`` – recipient phone number (normalised to E.164 by
+          :func:`~services.twilio_service.send_sms`).
+        * ``message`` – SMS body text (1–160 characters).
+        * ``lead_score`` – integer quality score in ``[0, 100]``.
+
+        There are no per-request ``dry_run`` or ``from_`` options; dry-run
+        behaviour is governed exclusively by ``TWILIO_DRY_RUN``.
 
     **What it returns**
         An :class:`SMSSendResponse` with the following notable fields:
