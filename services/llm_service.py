@@ -25,6 +25,8 @@ MODEL IN USE:
     When unset or blank, the free router "openrouter/free" is used (it picks
     a random available free model, so output quality can vary; set
     OPENROUTER_MODEL for consistent results).
+    Requests use a 60 s httpx timeout and disable SDK automatic retries
+    (max_retries=0) because the n8n workflow owns retry and backoff.
 
 BOOKING LINKS (Phase 8):
     Booking links, recipient addresses, phone numbers and the SMS opt-out are
@@ -57,6 +59,10 @@ from services.calendly_service import (
 # Lazy Loader -- _get_client()
 # ---------------------------------------------------------------------------
 
+# Per-request httpx timeout; SDK retries are disabled because n8n owns retries.
+_REQUEST_TIMEOUT_SECONDS = 60
+
+
 def _get_client() -> OpenAI:
     """
     Initialise and return the OpenRouter client at call time, not import time.
@@ -80,6 +86,8 @@ def _get_client() -> OpenAI:
     return OpenAI(
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
+        timeout=_REQUEST_TIMEOUT_SECONDS,
+        max_retries=0,
         default_headers={
             # OpenRouter uses the Referer to identify the calling application.
             "HTTP-Referer": "http://localhost:8000",
