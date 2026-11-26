@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Lead Response for Real Estate Agents</title>
+  <meta name="description" content="Engineering showcase: real estate lead intake with AI scoring, Supabase storage, Slack summary, and dry-run email/SMS/CRM. Portfolio demo.">
+  <style>
+    /* ---- tokens ---- */
+    :root {
+      --bg:          #0f1117;
+      --bg2:         #161b25;
+      --surface:     #1c2333;
+      --surface2:    #232b3e;
+      --border:      #2d3748;
+      --text:        #e2e8f0;
+      --muted:       #8892a4;
+      --accent:      #4f8ef7;
+      --accent-dark: #3b74d4;
+      --accent-fg:   #ffffff;
+      --live-bg:     #0f2e1a;
+      --live-fg:     #4ade80;
+      --live-border: #166534;
+      --dry-bg:      #2d1f00;
+      --dry-fg:      #fbbf24;
+      --dry-border:  #92400e;
+      --focus:       #4f8ef7;
+      --grid-line:   rgba(79,142,247,0.06);
+      --hero-glow:   rgba(79,142,247,0.14);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:          #f4f6fb;
+        --bg2:         #edf0f7;
+        --surface:     #ffffff;
+        --surface2:    #f0f4fb;
+        --border:      #cdd5e0;
+        --text:        #111827;
+        --muted:       #4b5563;
+        --accent:      #2563eb;
+        --accent-dark: #1d4ed8;
+        --accent-fg:   #ffffff;
+        --live-bg:     #dcfce7;
+        --live-fg:     #15803d;
+        --live-border: #86efac;
+        --dry-bg:      #fef3c7;
+        --dry-fg:      #92400e;
+        --dry-border:  #fcd34d;
+        --focus:       #2563eb;
+        --grid-line:   rgba(37,99,235,0.06);
+        --hero-glow:   rgba(37,99,235,0.08);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: clamp(0.95rem, 0.9rem + 0.25vw, 1.05rem);
+      line-height: 1.65;
+      color: var(--text);
+      background-color: var(--bg);
+    }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+    /* ---- skip link ---- */
+    .skip { position: absolute; left: -100vw; top: 1rem; }
+    .skip:focus { left: 1rem; background: var(--accent); color: var(--accent-fg); padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: 600; z-index: 200; }
+    /* ---- page shell ---- */
+    .page { max-width: 56rem; margin: 0 auto; padding: clamp(0.75rem,3vw,1.5rem) clamp(1rem,4vw,2rem) 4rem; }
+    /* ---- hero ---- */
+    header.hero {
+      position: relative;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: clamp(2rem,5vw,3.25rem) clamp(1.5rem,5vw,2.75rem);
+      margin-bottom: 1.5rem;
+      background-color: var(--surface);
+      background-image:
+        linear-gradient(135deg, var(--hero-glow) 0%, transparent 60%),
+        linear-gradient(var(--grid-line) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+      background-size: 100% 100%, 2.5rem 2.5rem, 2.5rem 2.5rem;
+    }
+    h1 {
+      font-size: clamp(1.6rem, 3.5vw, 2.5rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.025em;
+      margin-bottom: 1rem;
+    }
+    .sub {
+      font-size: clamp(0.98rem, 1.3vw, 1.1rem);
+      color: var(--muted);
+      max-width: 42rem;
+      margin-bottom: 1.75rem;
+    }
+    /* ---- actions ---- */
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: center; margin-bottom: 1.5rem; }
+    .btn-primary {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-fg);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 0.7rem 1.5rem;
+      border-radius: 8px;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: var(--accent-dark); }
+    .btn-ghost {
+      display: inline-block;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 0.7rem 1.25rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+    .btn-ghost:hover { border-color: var(--accent); }
+    /* ---- notice ---- */
+    .notice {
+      display: inline-block;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid var(--dry-border);
+      background: var(--dry-bg);
+      color: var(--dry-fg);
+    }
+    /* ---- stack chips ---- */
+    .stack { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1.5rem; }
+    .chip {
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 0.25rem 0.65rem;
+      border-radius: 4px;
+      background: var(--surface2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      letter-spacing: 0.01em;
+    }
+    /* ---- section cards ---- */
+    main { display: grid; gap: 1.25rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: clamp(1.25rem, 3.5vw, 2rem);
+    }
+    h2 {
+      font-size: clamp(1.1rem, 1.8vw, 1.35rem);
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      margin-bottom: 1.25rem;
+    }
+    /* ---- SVG diagram ---- */
+    .diagram-wrap { overflow-x: auto; margin-bottom: 1.75rem; }
+    /* ---- step cards grid ---- */
+    .steps { display: grid; grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr)); gap: 1rem; }
+    .step {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+    }
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.75rem;
+      height: 1.75rem;
+      background: var(--accent);
+      color: var(--accent-fg);
+      border-radius: 50%;
+      font-size: 0.8rem;
+      font-weight: 800;
+      margin-bottom: 0.6rem;
+    }
+    .step p { font-size: 0.93rem; color: var(--muted); margin-top: 0.3rem; }
+    .step strong { color: var(--text); }
+    /* ---- Slack mockup ---- */
+    .slack-wrap {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .slack-header {
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      padding: 0.6rem 1rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .slack-chan { font-weight: 700; color: var(--text); }
+    .ex-badge {
+      margin-left: auto;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .slack-body {
+      padding: 1rem 1rem 1rem 0;
+      display: flex;
+      gap: 0;
+    }
+    .slack-accent { width: 4px; min-height: 100%; background: var(--accent); border-radius: 2px; flex-shrink: 0; margin-right: 1rem; }
+    .slack-msg {
+      font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", "Liberation Mono", monospace;
+      font-size: 0.84rem;
+      line-height: 1.6;
+      color: var(--text);
+      white-space: pre;
+      overflow-x: auto;
+    }
+    .slack-caption { font-size: 0.85rem; color: var(--muted); margin-top: 0.75rem; }
+    /* ---- status table ---- */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
+    caption { text-align: left; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem; }
+    th, td { padding: 0.65rem 0.8rem; border-bottom: 1px solid var(--border); vertical-align: top; text-align: left; }
+    thead th { background: var(--surface2); font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    tbody tr:last-child td { border-bottom: 0; }
+    .pill {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 800;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
+      margin-right: 0.5rem;
+    }
+    .pill-live { background: var(--live-bg); color: var(--live-fg); border: 1px solid var(--live-border); }
+    .pill-dry  { background: var(--dry-bg);  color: var(--dry-fg);  border: 1px solid var(--dry-border); }
+    .tbl-note { margin-top: 0.9rem; font-size: 0.88rem; color: var(--muted); }
+    /* ---- safety cards ---- */
+    .safe-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: 1rem; }
+    .safe-card {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.1rem;
+      font-size: 0.93rem;
+      color: var(--muted);
+    }
+    .safe-card strong { display: block; color: var(--text); font-weight: 700; margin-bottom: 0.3rem; font-size: 0.95rem; }
+    /* ---- footer ---- */
+    footer {
+      margin-top: 2rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.88rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem 1.5rem;
+      align-items: center;
+    }
+    footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    footer a:hover { text-decoration: underline; }
+    a { color: var(--accent); }
+    /* ---- SVG diagram styles ---- */
+    .dsvg { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .dsvg .box { fill: var(--surface2); stroke: var(--border); stroke-width: 1.5; rx: 8; }
+    .dsvg .box-accent { fill: var(--surface2); stroke: var(--accent); stroke-width: 1.5; }
+    .dsvg .box-dashed { fill: var(--surface2); stroke: var(--dry-border); stroke-width: 1.5; stroke-dasharray: 5 3; }
+    .dsvg .bound { fill: none; stroke: var(--border); stroke-width: 1; stroke-dasharray: 6 4; rx: 10; }
+    .dsvg .lbl { fill: var(--text); font-size: 11px; font-weight: 600; }
+    .dsvg .sub-lbl { fill: var(--muted); font-size: 9px; }
+    .dsvg .bound-lbl { fill: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: 0.05em; }
+    .dsvg .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#ah); }
+    .dsvg .arrow-dashed { stroke: var(--dry-border); stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#ah-dry); }
+    .dsvg .edge-lbl { fill: var(--muted); font-size: 8px; }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="page">
+
+<!-- ===================== HERO ===================== -->
+<header class="hero">
+  <h1>AI Lead Response for Real Estate Agents</h1>
+  <p class="sub">A lead submits a form. An AI model scores it, the lead is stored once, and the agent gets a summary in Slack. In my test runs, the Slack summary arrived in under a minute.</p>
+  <div class="actions">
+    <a class="btn-primary" href="/lead-form">Try the live demo</a>
+    <a class="btn-ghost" href="#how">How it works</a>
+  </div>
+  <p class="notice">Use fake details: submissions are stored.</p>
+  <div class="stack">
+    <span class="chip">FastAPI</span>
+    <span class="chip">n8n</span>
+    <span class="chip">Caddy</span>
+    <span class="chip">Cloudflare Turnstile</span>
+    <span class="chip">OpenRouter</span>
+    <span class="chip">Supabase</span>
+    <span class="chip">Docker</span>
+  </div>
+</header>
+
+<!-- ===================== MAIN ===================== -->
+<main id="main" tabindex="-1">
+
+<!-- ---- HOW IT WORKS ---- -->
+<section class="card" id="how" aria-labelledby="how-h">
+  <h2 id="how-h">How it works</h2>
+
+  <!-- Architecture diagram -->
+  <div class="diagram-wrap">
+    <svg class="dsvg" role="img" aria-label="Architecture diagram: Browser sends HTTPS to Caddy, which applies CSP and rate limits before forwarding to n8n inside a Docker Compose server boundary. n8n validates the request, runs the CAPTCHA check, and applies retry logic before calling FastAPI. FastAPI applies an API key check, runs AI scoring via OpenRouter, stores the lead in Supabase, and passes follow-up work to a dry-run email/SMS/CRM block. n8n also sends a Slack summary without personal details." viewBox="0 0 620 310" width="100%" height="auto">
+      <title>Request flow and architecture diagram</title>
+      <desc>Browser to Caddy to n8n to FastAPI. FastAPI calls OpenRouter for AI scoring, Supabase for storage, and a dry-run block for email, SMS, and CRM. n8n sends a Slack summary without personal details. Caddy and n8n and FastAPI run inside one Docker Compose server boundary.</desc>
+      <defs>
+        <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="var(--muted)"/>
+        </marker>
+        <marker id="ah-dry" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="var(--dry-border)"/>
+        </marker>
+      </defs>
+
+      <!-- Docker Compose boundary -->
+      <rect class="bound" x="155" y="20" width="310" height="195" rx="10"/>
+      <text class="bound-lbl" x="162" y="34">ONE SERVER (DOCKER COMPOSE)</text>
+
+      <!-- Browser -->
+      <rect class="box-accent" x="10" y="110" width="90" height="42" rx="8"/>
+      <text class="lbl" x="55" y="134" text-anchor="middle">Browser</text>
+
+      <!-- Caddy -->
+      <rect class="box" x="168" y="94" width="88" height="62" rx="8"/>
+      <text class="lbl" x="212" y="118" text-anchor="middle">Caddy</text>
+      <text class="sub-lbl" x="212" y="130" text-anchor="middle">CSP, rate limits</text>
+      <text class="sub-lbl" x="212" y="141" text-anchor="middle">TLS termination</text>
+
+      <!-- n8n -->
+      <rect class="box" x="290" y="94" width="88" height="62" rx="8"/>
+      <text class="lbl" x="334" y="118" text-anchor="middle">n8n</text>
+      <text class="sub-lbl" x="334" y="130" text-anchor="middle">validate, CAPTCHA</text>
+      <text class="sub-lbl" x="334" y="141" text-anchor="middle">retries</text>
+
+      <!-- FastAPI -->
+      <rect class="box" x="410" y="94" width="88" height="62" rx="8"/>
+      <text class="lbl" x="454" y="118" text-anchor="middle">FastAPI</text>
+      <text class="sub-lbl" x="454" y="130" text-anchor="middle">API key, AI score</text>
+      <text class="sub-lbl" x="454" y="141" text-anchor="middle">rule fallback</text>
+
+      <!-- OpenRouter -->
+      <rect class="box" x="530" y="50" width="82" height="38" rx="8"/>
+      <text class="lbl" x="571" y="70" text-anchor="middle">OpenRouter</text>
+      <text class="sub-lbl" x="571" y="81" text-anchor="middle">AI model</text>
+
+      <!-- Supabase -->
+      <rect class="box" x="530" y="104" width="82" height="38" rx="8"/>
+      <text class="lbl" x="571" y="124" text-anchor="middle">Supabase</text>
+      <text class="sub-lbl" x="571" y="135" text-anchor="middle">lead stored once</text>
+
+      <!-- Dry-run block -->
+      <rect class="box-dashed" x="530" y="158" width="82" height="46" rx="8"/>
+      <text class="lbl" x="571" y="177" text-anchor="middle">Email / SMS</text>
+      <text class="lbl" x="571" y="191" text-anchor="middle">/ CRM</text>
+      <text class="sub-lbl" x="571" y="201" text-anchor="middle">(dry-run here)</text>
+
+      <!-- Slack -->
+      <rect class="box" x="290" y="230" width="88" height="38" rx="8"/>
+      <text class="lbl" x="334" y="251" text-anchor="middle">Slack</text>
+      <text class="sub-lbl" x="334" y="262" text-anchor="middle">summary only</text>
+
+      <!-- Arrows -->
+      <!-- Browser -> Caddy -->
+      <line class="arrow" x1="100" y1="131" x2="166" y2="125"/>
+      <text class="edge-lbl" x="122" y="122">HTTPS</text>
+
+      <!-- Caddy -> n8n -->
+      <line class="arrow" x1="256" y1="125" x2="288" y2="125"/>
+
+      <!-- n8n -> FastAPI -->
+      <line class="arrow" x1="378" y1="125" x2="408" y2="125"/>
+
+      <!-- FastAPI -> OpenRouter -->
+      <line class="arrow" x1="488" y1="107" x2="528" y2="78"/>
+      <text class="edge-lbl" x="496" y="88">AI model</text>
+
+      <!-- FastAPI -> Supabase -->
+      <line class="arrow" x1="498" y1="123" x2="528" y2="123"/>
+
+      <!-- FastAPI -> Dry-run -->
+      <line class="arrow-dashed" x1="488" y1="143" x2="528" y2="168"/>
+
+      <!-- n8n -> Slack -->
+      <line class="arrow" x1="334" y1="156" x2="334" y2="228"/>
+      <text class="edge-lbl" x="338" y="195">no personal details</text>
+    </svg>
+  </div>
+
+  <!-- Step cards -->
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <strong>Edge checks</strong>
+      <p>CAPTCHA, size cap and rate limits applied at the edge before the request goes any further.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <strong>Accepted immediately</strong>
+      <p>The form gets its answer first; processing continues in the background.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <strong>AI scoring</strong>
+      <p>The lead is scored by an AI model; the email address and phone number are not sent to the model.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <strong>Stored once</strong>
+      <p>Delivery flags prevent duplicate sends even if the pipeline retries.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <strong>Follow-up prepared</strong>
+      <p>Email, SMS and CRM sync for warm and hot leads; cold leads are stored only.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <strong>Slack summary</strong>
+      <p>Posted without personal details so the alert is safe to share in a team channel.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ---- WHAT THE AGENT SEES ---- -->
+<section class="card" aria-labelledby="agent-h">
+  <h2 id="agent-h">What the agent sees</h2>
+  <div class="slack-wrap">
+    <div class="slack-header">
+      <span class="slack-chan">#leads</span>
+      <span class="slack-caption">incoming lead summary</span>
+      <span class="ex-badge">Illustrative example</span>
+    </div>
+    <div class="slack-body">
+      <div class="slack-accent"></div>
+      <pre class="slack-msg">HOT lead - score 73  [DRY RUN: nothing was sent]
+Property: house | Location: Austin, TX | Budget: $450k-$550k | Timeline: within 2 months
+Steps: email: dry_run | sms: dry_run | crm: dry_run
+Lead ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</pre>
+    </div>
+  </div>
+  <p class="slack-caption" style="margin-top:0.75rem">No name, email, phone or message text ever appears in the alert.</p>
+</section>
+
+<!-- ---- STATUS TABLE ---- -->
+<section class="card" aria-labelledby="status-h">
+  <h2 id="status-h">What is live and what is dry-run</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Channel delivery status on this demo deployment</caption>
+      <thead>
+        <tr>
+          <th scope="col">Channel</th>
+          <th scope="col">Status here</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Lead intake form with CAPTCHA</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">AI scoring</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Storage (database)</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Slack summary</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Follow-up email</th>
+          <td><span class="pill pill-dry">DRY-RUN</span> Implemented via Gmail OAuth; dry-run on this public demo so submissions never mail strangers.</td>
+        </tr>
+        <tr>
+          <th scope="row">Follow-up SMS</th>
+          <td><span class="pill pill-dry">DRY-RUN</span> Implemented via Twilio with phone validation and GSM-7 formatting; dry-run on this public demo.</td>
+        </tr>
+        <tr>
+          <th scope="row">CRM sync</th>
+          <td><span class="pill pill-dry">DRY-RUN</span> Implemented via HubSpot idempotent contact upsert; dry-run on this public demo.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">Dry-run is the default; sending is enabled only by an explicit setting.</p>
+</section>
+
+<!-- ---- SAFETY CARDS ---- -->
+<section class="card" aria-labelledby="safety-h">
+  <h2 id="safety-h">Built to fail safely</h2>
+  <div class="safe-grid">
+    <div class="safe-card">
+      <strong>API key on every route</strong>
+      Every API route needs a key; only the health check is open.
+    </div>
+    <div class="safe-card">
+      <strong>No direct internet access</strong>
+      The services behind the form are not reachable from the internet directly.
+    </div>
+    <div class="safe-card">
+      <strong>CAPTCHA fails closed</strong>
+      A missing or invalid token is rejected before the request reaches the backend.
+    </div>
+    <div class="safe-card">
+      <strong>Classified retries</strong>
+      Failed steps are classified and retried with backoff, up to 3 attempts.
+    </div>
+    <div class="safe-card">
+      <strong>Rule-based fallback</strong>
+      If the AI is unavailable on the final attempt a rule-based scorer still stores the lead.
+    </div>
+    <div class="safe-card">
+      <strong>First write wins</strong>
+      A retried request cannot overwrite a stored lead; idempotency is enforced at write time.
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <p>Portfolio demo. Submissions are stored; please use fake data.</p>
+  <a href="/lead-form">Try the live demo</a>
+</footer>
+
+</div>
+</body>
+</html>
