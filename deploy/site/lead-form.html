@@ -26,6 +26,30 @@
       font-size: 1.5rem;
       color: #111;
     }
+    .back {
+      display: inline-block;
+      font-size: 0.875rem;
+      color: #0052cc;
+      text-decoration: none;
+      margin-bottom: 0.75rem;
+    }
+    .back:hover {
+      text-decoration: underline;
+    }
+    .back:focus-visible {
+      outline: 2px solid #0052cc;
+      outline-offset: 2px;
+      border-radius: 2px;
+    }
+    .notice {
+      background-color: #eef5ff;
+      border: 1px solid #b8d4f5;
+      color: #1a365d;
+      border-radius: 4px;
+      padding: 0.65rem 0.85rem;
+      font-size: 0.9rem;
+      margin: 0 0 1.25rem;
+    }
     .form-group {
       margin-bottom: 1.25rem;
     }
@@ -86,7 +110,9 @@
 </head>
 <body>
   <main class="form-container">
+    <a class="back" href="/">Back to the overview</a>
     <h1>Request a property viewing</h1>
+    <p class="notice">Demo form: use fake details. Submissions are stored.</p>
     <form id="lead-form" method="post" action="#">
       <div class="form-group">
         <label for="name">Full Name *</label>
@@ -122,17 +148,17 @@
 
       <div class="form-group">
         <label for="preferred_location">Preferred Location</label>
-        <input type="text" id="preferred_location" name="preferred_location" maxlength="200">
+        <input type="text" id="preferred_location" name="preferred_location" maxlength="200" autocomplete="off">
       </div>
 
       <div class="form-group">
         <label for="budget">Budget</label>
-        <input type="text" id="budget" name="budget" maxlength="200">
+        <input type="text" id="budget" name="budget" maxlength="200" autocomplete="off">
       </div>
 
       <div class="form-group">
         <label for="timeline">Timeline</label>
-        <input type="text" id="timeline" name="timeline" maxlength="200">
+        <input type="text" id="timeline" name="timeline" maxlength="200" autocomplete="off">
       </div>
 
       <div class="cf-turnstile" data-sitekey='{{env "TURNSTILE_SITEKEY"}}'></div>

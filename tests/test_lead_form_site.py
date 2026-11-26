@@ -325,5 +325,84 @@ class TestEGroupNodeCheck(unittest.TestCase):
             Path(tmp_path).unlink(missing_ok=True)
 
 
+# Group H: Notice, back link, autofill, and template guards
+class TestHGroupNoticeAndAutofill(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.lead_parser = _LeadFormParser()
+        cls.lead_parser.feed(_RAW_HTML)
+        cls.fields_by_name = {attrs["name"]: attrs for _, attrs in cls.lead_parser.fields}
+
+        class _PageParser(HTMLParser):
+            def __init__(self):
+                super().__init__()
+                self.anchors = []
+                self._in_ignored = False
+                self._chunks = []
+
+            def handle_starttag(self, tag, attrs):
+                tag_l = tag.lower()
+                if tag_l in ("style", "script"):
+                    self._in_ignored = True
+                if tag_l == "a":
+                    self.anchors.append(dict(attrs))
+
+            def handle_endtag(self, tag):
+                if tag.lower() in ("style", "script"):
+                    self._in_ignored = False
+
+            def handle_data(self, data):
+                if not self._in_ignored:
+                    s = data.strip()
+                    if s:
+                        self._chunks.append(s)
+
+        cls.page_parser = _PageParser()
+        cls.page_parser.feed(_RAW_HTML)
+        cls.visible_text = " ".join(cls.page_parser._chunks)
+
+    def test_h01_optional_fields_disable_autocomplete(self):
+        for field in ("preferred_location", "budget", "timeline"):
+            with self.subTest(field=field):
+                self.assertIn(field, self.fields_by_name)
+                self.assertEqual(self.fields_by_name[field].get("autocomplete"), "off")
+
+    def test_h02_contact_fields_keep_autocomplete_hints(self):
+        expected = {"name": "name", "email": "email", "phone": "tel"}
+        for field, hint in expected.items():
+            with self.subTest(field=field):
+                self.assertIn(field, self.fields_by_name)
+                ac = self.fields_by_name[field].get("autocomplete")
+                self.assertNotEqual(ac, "off")
+                self.assertEqual(ac, hint)
+
+    def test_h03_single_back_link_to_root(self):
+        back_links = [
+            a for a in self.page_parser.anchors
+            if "back" in a.get("class", "").split()
+        ]
+        self.assertEqual(len(back_links), 1, f"Expected 1 a.back element, got {len(back_links)}")
+        self.assertEqual(back_links[0].get("href"), "/")
+
+    def test_h04_notice_text_present_in_visible_text(self):
+        visible_lower = self.visible_text.lower()
+        for phrase in ("use fake details", "submissions are stored"):
+            with self.subTest(phrase=phrase):
+                self.assertIn(phrase, visible_lower)
+
+    def test_h05_notice_appears_before_form(self):
+        idx_notice = _RAW_HTML.find('<p class="notice">')
+        idx_form = _RAW_HTML.find("<form")
+        self.assertTrue(
+            -1 < idx_notice < idx_form,
+            f"Expected <p class=\"notice\"> before <form, got notice={idx_notice}, form={idx_form}",
+        )
+
+    def test_h06_single_template_braces_pair(self):
+        self.assertEqual(_RAW_HTML.count("{{"), 1, "Expected exactly one '{{' in lead-form.html")
+        self.assertEqual(_RAW_HTML.count("}}"), 1, "Expected exactly one '}}' in lead-form.html")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
