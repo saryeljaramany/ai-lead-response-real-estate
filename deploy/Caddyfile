@@ -19,6 +19,7 @@
 	@oauth path /email/auth /email/auth/callback
 	@form_page path /lead-form
 	@form_js path /lead-form.js
+	@home path /
 	@not_post not method POST
 	@not_get not method GET
 	@not_get_head not method GET HEAD
@@ -110,7 +111,21 @@
 		}
 	}
 
-	# 6) Everything else is closed.
+	# 6) Showcase page at / (GET/HEAD only, static, script-free CSP)
+	handle @home {
+		route {
+			respond @not_get_head "Method Not Allowed" 405
+			root * /srv/site
+			rewrite * /index.html
+			header {
+				Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+				Cache-Control "public, max-age=300"
+			}
+			file_server
+		}
+	}
+
+	# 7) Everything else is closed.
 	handle {
 		respond "Not Found" 404
 	}

@@ -478,6 +478,7 @@ class TestECaddyfile(unittest.TestCase):
             "/email/auth/callback",
             "/lead-form",
             "/lead-form.js",
+            "/",
         ]
         self.assertEqual(
             sorted(tokens),
@@ -605,9 +606,56 @@ class TestECaddyfile(unittest.TestCase):
     def test_e10_root_srv_site_and_no_other_file_server_or_templates(self):
         self.assertIn("root * /srv/site", self.stripped)
         fs_matches = re.findall(r"\bfile_server\b", self.stripped)
-        self.assertEqual(len(fs_matches), 2, f"file_server must appear exactly twice, got {len(fs_matches)}")
+        self.assertEqual(len(fs_matches), 3, f"file_server must appear three times, got {len(fs_matches)}")
         tmpl_matches = re.findall(r"\btemplates\b", self.stripped)
         self.assertEqual(len(tmpl_matches), 1, f"templates must appear exactly once, got {len(tmpl_matches)}")
+
+    def test_e11_showcase_home_handler(self):
+        home_match = re.search(r"handle\s+@home\s*\{([\s\S]*?)\n\t\}", self.stripped)
+        self.assertIsNotNone(home_match, "handle @home block not found")
+        body = home_match.group(1)
+
+        self.assertIn('respond @not_get_head "Method Not Allowed" 405', body)
+        self.assertIn('Cache-Control "public, max-age=300"', body)
+
+        expected_csp = (
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
+        csp_match = re.search(r'Content-Security-Policy\s+"([^"]+)"', body)
+        self.assertIsNotNone(csp_match, "handle @home must set Content-Security-Policy")
+        csp_value = csp_match.group(1)
+        self.assertEqual(csp_value, expected_csp)
+
+        for forbidden in ("script-src", "unsafe-eval", "img-src", "http:", "https:"):
+            self.assertNotIn(forbidden, csp_value, f"Home CSP must not contain {forbidden!r}")
+
+        for forbidden in ("templates", "rate_limit", "reverse_proxy"):
+            self.assertNotIn(forbidden, body, f"handle @home must not contain {forbidden!r}")
+
+        idx_root = body.find("root * /srv/site")
+        idx_rewrite = body.find("rewrite * /index.html")
+        idx_header = body.find("header {")
+        idx_fileserver = body.find("file_server")
+        self.assertTrue(
+            -1 < idx_root < idx_rewrite < idx_header < idx_fileserver,
+            f"Expected order root < rewrite < header < file_server, got: "
+            f"root={idx_root}, rewrite={idx_rewrite}, header={idx_header}, file_server={idx_fileserver}",
+        )
+
+        rewrites = re.findall(r"rewrite\s+\*\s+/index\.html(?:\s|$)", self.stripped)
+        self.assertEqual(
+            len(rewrites),
+            1,
+            f"Expected exactly one 'rewrite * /index.html', got {len(rewrites)}",
+        )
+
+        home_matchers = re.findall(r"(?m)^\s*@home\s+path\s+/\s*$", self.stripped)
+        self.assertEqual(
+            len(home_matchers),
+            1,
+            f"Expected '@home path /' exactly once, got {len(home_matchers)}",
+        )
 
 
 class TestFCaddyDockerfile(unittest.TestCase):
