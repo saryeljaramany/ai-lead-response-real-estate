@@ -9,7 +9,7 @@ import unittest
 
 _REPO = Path(__file__).resolve().parent.parent
 _HTML_PATH = _REPO / "deploy" / "site" / "index.html"
-_MAX_BYTES = 35000
+_MAX_BYTES = 45000
 
 _FORBIDDEN_TAGS = (
     "script", "link", "img", "image", "iframe", "form",
@@ -39,8 +39,27 @@ _BANNED_WORDS = (
     "ai-powered",
     "under 60 seconds",
     "honest limits",
+    "test runs",
+    "i built",
+    "calendly",
 )
 _PLACEHOLDER_TOKENS = ("TODO", "FIXME", "<PASTE", "your-name")
+
+_DESIGN_TOKENS_ROOT = (
+    "--bg", "--surface", "--surface-2", "--fg", "--muted", "--border",
+    "--accent", "--accent-fg", "--live", "--live-bg",
+    "--dryrun", "--dryrun-bg", "--radius", "--shadow",
+    "--space-1", "--space-2", "--space-3", "--space-4", "--space-5", "--space-6",
+)
+_DESIGN_TOKENS_DARK = (
+    "--bg", "--surface", "--surface-2", "--fg", "--muted", "--border",
+    "--accent", "--accent-fg", "--live", "--live-bg",
+    "--dryrun", "--dryrun-bg", "--shadow",
+)
+_SVG_REQUIRED_TEXTS = (
+    "Edge", "Orchestration", "Service",
+    "Caddy", "n8n", "FastAPI", "OpenRouter", "Supabase", "Slack", "Browser",
+)
 
 
 class _ShowcaseParser(HTMLParser):
@@ -55,12 +74,14 @@ class _ShowcaseParser(HTMLParser):
         self.links = []         # list of attrs dicts for <a>
         self.all_attrs = []     # (tag, attr_name, attr_value)
         self.ids = set()        # all id= values found
+        self.class_list = []    # (tag, [classes])
         # SVG tracking
         self.svgs = []          # list of attrs_dict per <svg>
         self._svg_depth = 0
         self._svg_has_title = False
         self._svg_has_desc = False
         self._svg_checks = []   # list of (has_title, has_desc) per closed svg
+        self._svg_text_chunks = []
         # text tracking
         self._in_title = False
         self._in_style = False
@@ -75,6 +96,8 @@ class _ShowcaseParser(HTMLParser):
             self.all_attrs.append((tag_l, k, v))
         if "id" in attrs_dict:
             self.ids.add(attrs_dict["id"])
+        if "class" in attrs_dict:
+            self.class_list.append((tag_l, attrs_dict["class"].split()))
 
         if tag_l == "html":
             self.html_attrs = attrs_dict
@@ -119,6 +142,10 @@ class _ShowcaseParser(HTMLParser):
     def handle_data(self, data):
         if self._in_title:
             self._title_chunks.append(data)
+        if self._svg_depth > 0 and not self._in_style:
+            stripped = data.strip()
+            if stripped:
+                self._svg_text_chunks.append(stripped)
         if not self._in_style:
             stripped = data.strip()
             if stripped:
@@ -127,6 +154,14 @@ class _ShowcaseParser(HTMLParser):
     @property
     def visible_text(self):
         return " ".join(self._visible_chunks)
+
+    @property
+    def svg_text(self):
+        return " ".join(self._svg_text_chunks)
+
+    def count_class(self, cls_name):
+        """Count elements that have *cls_name* among their classes."""
+        return sum(1 for _, classes in self.class_list if cls_name in classes)
 
 
 def _load():
@@ -304,6 +339,70 @@ class TestCGroupContentAndGuards(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertNotIn(token.lower(), lower,
                                  f"Placeholder {token!r} found")
+
+    def test_c10_no_test_runs_or_i_built(self):
+        lower = self.raw.lower()
+        self.assertNotIn("test runs", lower,
+                         "'test runs' found in file")
+        self.assertNotIn("i built", lower,
+                         "'i built' found in file")
+
+    def test_c11_no_calendly(self):
+        lower = self.vis.lower()
+        self.assertNotIn("calendly", lower,
+                         "'Calendly' found in visible text")
+
+
+# ---------------------------------------------------------------------------
+# Group D: Design tokens and layout
+# ---------------------------------------------------------------------------
+class TestDGroupDesignAndLayout(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.raw, cls.p = _load()
+
+    def test_d01_max_width_1180px(self):
+        self.assertRegex(self.raw, r"max-width:\s*1180px",
+                         "CSS must contain max-width: 1180px")
+
+    def test_d02_root_design_tokens(self):
+        # Extract :root block
+        root_m = re.search(r":root\s*\{([^}]+)\}", self.raw)
+        self.assertIsNotNone(root_m, ":root block not found")
+        root_css = root_m.group(1)
+        for token in _DESIGN_TOKENS_ROOT:
+            with self.subTest(token=token):
+                self.assertIn(token + ":", root_css,
+                              f"Token {token} not in :root")
+
+    def test_d03_dark_theme_overrides(self):
+        # Find the prefers-color-scheme: dark media query
+        dark_m = re.search(
+            r"@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)\s*\{(.*?)\}\s*\}",
+            self.raw, re.DOTALL,
+        )
+        self.assertIsNotNone(dark_m, "prefers-color-scheme: dark block not found")
+        dark_css = dark_m.group(1)
+        for token in _DESIGN_TOKENS_DARK:
+            with self.subTest(token=token):
+                self.assertIn(token + ":", dark_css,
+                              f"Token {token} not overridden in dark theme")
+
+    def test_d04_exactly_six_steps(self):
+        count = self.p.count_class("step")
+        self.assertEqual(count, 6, f"Expected 6 .step elements, got {count}")
+
+    def test_d05_exactly_six_bento_cards(self):
+        count = self.p.count_class("bento-card")
+        self.assertEqual(count, 6, f"Expected 6 .bento-card elements, got {count}")
+
+    def test_d06_svg_text_contains_required_labels(self):
+        svg_text = self.p.svg_text
+        for label in _SVG_REQUIRED_TEXTS:
+            with self.subTest(label=label):
+                self.assertIn(label, svg_text,
+                              f"SVG text missing {label!r}")
 
 
 if __name__ == "__main__":
