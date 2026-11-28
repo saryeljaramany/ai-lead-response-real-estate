@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI Lead Response System - Engineering Portfolio</title>
+  <meta name="description" content="Engineering portfolio: a real estate lead intake pipeline with LLM scoring, idempotent storage, Slack alerts and dry-run follow-ups. Static showcase page.">
+  <style>
+    /* ---- design tokens (light default) ---- */
+    :root {
+      --bg:          #f4f6fb;
+      --surface:     #ffffff;
+      --surface-2:   #f0f4fb;
+      --fg:          #111827;
+      --muted:       #4b5563;
+      --border:      #cdd5e0;
+      --accent:      #2563eb;
+      --accent-fg:   #ffffff;
+      --live:        #15803d;
+      --live-bg:     #dcfce7;
+      --dryrun:      #92400e;
+      --dryrun-bg:   #fef3c7;
+      --radius:      10px;
+      --shadow:      0 1px 3px rgba(0,0,0,0.08);
+      --space-1:     0.25rem;
+      --space-2:     0.5rem;
+      --space-3:     1rem;
+      --space-4:     1.5rem;
+      --space-5:     2rem;
+      --space-6:     3rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:          #0f1117;
+        --surface:     #1c2333;
+        --surface-2:   #232b3e;
+        --fg:          #e2e8f0;
+        --muted:       #8892a4;
+        --border:      #2d3748;
+        --accent:      #4f8ef7;
+        --accent-fg:   #ffffff;
+        --live:        #4ade80;
+        --live-bg:     #0f2e1a;
+        --dryrun:      #fbbf24;
+        --dryrun-bg:   #2d1f00;
+        --shadow:      0 1px 3px rgba(0,0,0,0.3);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; max-width: 100%; overflow-x: clip; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: clamp(0.95rem, 0.9rem + 0.25vw, 1.05rem);
+      line-height: 1.65;
+      color: var(--fg);
+      background: var(--bg);
+    }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    a { color: var(--accent); }
+    code {
+      font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", "Liberation Mono", monospace;
+      font-size: 0.9em;
+    }
+    /* ---- skip link ---- */
+    .skip { position: absolute; left: -100vw; top: var(--space-3); }
+    .skip:focus { left: var(--space-3); background: var(--accent); color: var(--accent-fg); padding: var(--space-2) var(--space-3); border-radius: 6px; text-decoration: none; font-weight: 600; z-index: 200; }
+    /* ---- responsive shell & overflow guards ---- */
+    .container, header, main, section, footer {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .hero > *, .agent-split > *, .steps > *, .bento > *, .slack-body > *, .actions > *, .stack > *, .pipeline-stage > * {
+      min-width: 0;
+      max-width: 100%;
+    }
+    .page {
+      width: 100%;
+      max-width: 1180px;
+      min-width: 0;
+      margin: 0 auto;
+      padding: clamp(0.75rem,3vw,1.5rem) clamp(1rem,4vw,2rem) 4rem;
+    }
+    /* ---- hero split ---- */
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: var(--space-5);
+      align-items: start;
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: clamp(1.25rem,4vw,3rem) clamp(1.25rem,4vw,2.75rem);
+      margin-bottom: var(--space-4);
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    @media (max-width: 900px) {
+      .hero { grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+    }
+    .eyebrow {
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: var(--space-2);
+    }
+    h1 {
+      font-size: clamp(1.6rem, 3.5vw, 2.5rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -0.025em;
+      margin-bottom: var(--space-3);
+    }
+    .lead {
+      font-size: clamp(0.98rem, 1.3vw, 1.1rem);
+      color: var(--muted);
+      max-width: 42rem;
+      margin-bottom: var(--space-4);
+    }
+    /* ---- actions ---- */
+    .actions { display: flex; flex-wrap: wrap; gap: 0.75rem 1rem; align-items: center; margin-bottom: var(--space-4); }
+    .btn-primary {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--accent-fg);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 1rem;
+      padding: 0.7rem 1.5rem;
+      border-radius: 8px;
+      transition: opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-ghost {
+      display: inline-block;
+      color: var(--accent);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 1rem;
+      padding: 0.7rem 1.25rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+    .btn-ghost:hover { border-color: var(--accent); }
+    /* ---- notice ---- */
+    .notice {
+      display: inline-block;
+      max-width: 100%;
+      font-size: 0.88rem;
+      font-weight: 600;
+      padding: 0.35rem 0.75rem;
+      border-radius: 6px;
+      border: 1px solid var(--dryrun);
+      background: var(--dryrun-bg);
+      color: var(--dryrun);
+    }
+    /* ---- tech chips ---- */
+    .stack { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+    .chip {
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: var(--space-1) 0.65rem;
+      border-radius: 4px;
+      background: var(--surface-2);
+      color: var(--muted);
+      border: 1px solid var(--border);
+      letter-spacing: 0.01em;
+    }
+    /* ---- pipeline card ---- */
+    .pipeline-card {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-4);
+    }
+    .pipeline-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin-bottom: var(--space-3);
+    }
+    .pipeline-stage {
+      display: flex;
+      align-items: center;
+      gap: var(--space-3);
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.93rem;
+    }
+    .pipeline-stage:last-child { border-bottom: none; }
+    .pipeline-stage .stage-name { flex: 1; font-weight: 600; color: var(--fg); }
+    /* ---- pill ---- */
+    .pill {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 800;
+      padding: 0.2rem 0.6rem;
+      border-radius: 4px;
+      letter-spacing: 0.04em;
+      white-space: nowrap;
+    }
+    .pill-live { background: var(--live-bg); color: var(--live); }
+    .pill-dry  { background: var(--dryrun-bg); color: var(--dryrun); }
+    /* ---- section cards ---- */
+    main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; }
+    .card {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: clamp(1.25rem, 3.5vw, 2rem);
+      box-shadow: var(--shadow);
+    }
+    h2 {
+      font-size: clamp(1.1rem, 1.8vw, 1.35rem);
+      font-weight: 700;
+      letter-spacing: -0.015em;
+      margin-bottom: 1.25rem;
+    }
+    /* ---- SVG diagram ---- */
+    .diagram-wrap {
+      display: block;
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+      margin-bottom: var(--space-4);
+    }
+    .diagram-wrap svg { display: block; width: 100%; min-width: 720px; height: auto; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); border: 0; }
+    /* ---- step cards 3x2 grid ---- */
+    .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+    @media (max-width: 800px) {
+      .steps { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+    }
+    @media (max-width: 480px) {
+      .steps { grid-template-columns: minmax(0, 1fr); }
+    }
+    .step {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-3) 1.1rem;
+    }
+    .step-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 1.75rem;
+      height: 1.75rem;
+      background: var(--accent);
+      color: var(--accent-fg);
+      border-radius: 50%;
+      font-size: 0.8rem;
+      font-weight: 800;
+      margin-bottom: 0.6rem;
+    }
+    .step p { font-size: 0.93rem; color: var(--muted); margin-top: 0.3rem; }
+    .step strong { color: var(--fg); }
+    /* ---- agent alert split ---- */
+    .agent-split {
+      display: grid;
+      grid-template-columns: minmax(0, 35fr) minmax(0, 65fr);
+      gap: var(--space-4);
+      align-items: center;
+    }
+    @media (max-width: 860px) {
+      .agent-split { grid-template-columns: minmax(0, 1fr); }
+    }
+    .agent-info h2 { margin-bottom: var(--space-2); }
+    .agent-caption { font-size: 0.96rem; color: var(--fg); font-weight: 600; margin-bottom: var(--space-2); }
+    .agent-note { font-size: 0.9rem; color: var(--muted); }
+    /* ---- Slack mockup ---- */
+    .slack-wrap {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .slack-header {
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border);
+      padding: 0.6rem 1rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--space-2);
+    }
+    .slack-chan { font-weight: 700; color: var(--fg); }
+    .slack-sub { font-size: 0.82rem; color: var(--muted); }
+    .ex-badge {
+      margin-left: auto;
+      font-size: 0.75rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .slack-body {
+      padding: 1rem 1rem 1rem 0;
+      display: flex;
+      gap: 0;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .slack-accent { width: 4px; min-height: 100%; background: var(--accent); border-radius: 2px; flex-shrink: 0; margin-right: 1rem; }
+    .slack-msg {
+      flex: 1;
+      min-width: 0;
+      max-width: 100%;
+      font-family: "SF Mono", "Cascadia Code", "Fira Code", "Consolas", "Liberation Mono", monospace;
+      font-size: 0.84rem;
+      line-height: 1.6;
+      color: var(--fg);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    /* ---- status table ---- */
+    .table-wrap {
+      width: 100%;
+      max-width: 100%;
+      min-width: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: 0.93rem; }
+    caption { text-align: left; font-size: 0.85rem; color: var(--muted); margin-bottom: var(--space-2); }
+    th, td { padding: 0.75rem 0.9rem; border-bottom: 1px solid var(--border); vertical-align: middle; text-align: left; }
+    thead th { background: var(--surface-2); font-weight: 700; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    tbody th[scope="row"] { font-weight: 600; white-space: nowrap; width: 28%; }
+    tbody td .pill { margin-right: var(--space-2); }
+    tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+    @media (max-width: 640px) {
+      table, tbody, tr { display: block; width: 100%; }
+      thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
+      tbody tr { padding: 0.75rem 0; border-bottom: 1px solid var(--border); }
+      tbody tr:last-child { border-bottom: 0; }
+      tbody th[scope="row"], tbody td { display: block; width: 100%; padding: 0; border-bottom: 0; white-space: normal; }
+      tbody th[scope="row"] { margin-bottom: 0.35rem; color: var(--fg); }
+    }
+    .tbl-note { margin-top: 0.9rem; font-size: 0.88rem; color: var(--muted); }
+    /* ---- bento grid ---- */
+    .bento { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+    @media (max-width: 800px) {
+      .bento { grid-template-columns: minmax(0, 1fr); }
+    }
+    .bento-card {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-3) 1.1rem;
+      font-size: 0.93rem;
+      color: var(--muted);
+    }
+    .bento-card strong { display: block; color: var(--fg); font-weight: 700; margin-bottom: 0.3rem; font-size: 0.95rem; }
+    .bento-wide { grid-column: span 2; }
+    @media (max-width: 800px) {
+      .bento-wide { grid-column: span 1; }
+    }
+    /* ---- footer ---- */
+    footer {
+      margin-top: var(--space-5);
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.88rem;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-2) var(--space-4);
+      align-items: center;
+    }
+    footer a { color: var(--accent); text-decoration: none; font-weight: 600; }
+    footer a:hover { text-decoration: underline; }
+    /* ---- SVG diagram styles ---- */
+    .dsvg { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    .dsvg .band { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; rx: 6; }
+    .dsvg .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.5; rx: 8; }
+    .dsvg .box-accent { fill: var(--surface); stroke: var(--accent); stroke-width: 1.5; rx: 8; }
+    .dsvg .box-dashed { fill: var(--surface); stroke: var(--dryrun); stroke-width: 1.5; stroke-dasharray: 5 3; rx: 8; }
+    .dsvg .bound { fill: none; stroke: var(--border); stroke-width: 1.2; stroke-dasharray: 6 4; rx: 10; }
+    .dsvg .lbl { fill: var(--fg); font-size: 13px; font-weight: 700; }
+    .dsvg .sub-lbl { fill: var(--muted); font-size: 10px; }
+    .dsvg .band-lbl { fill: var(--muted); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; }
+    .dsvg .bound-lbl { fill: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: 0.03em; }
+    .dsvg .arrow { stroke: var(--muted); stroke-width: 1.5; fill: none; marker-end: url(#ah); }
+    .dsvg .arrow-dashed { stroke: var(--dryrun); stroke-width: 1.5; fill: none; stroke-dasharray: 5 3; marker-end: url(#ah-dry); }
+    .dsvg .edge-lbl { fill: var(--muted); font-size: 9.5px; font-weight: 600; }
+  </style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<div class="page container">
+
+<!-- ===================== HERO (split) ===================== -->
+<header class="hero">
+  <div class="hero-left">
+    <p class="eyebrow">Portfolio project</p>
+    <h1>AI Lead Response for Real Estate Agents</h1>
+    <p class="lead">An end-to-end system that captures inbound leads, qualifies them with an LLM, stores each lead once, prepares email, SMS and CRM follow-up, and alerts the agent.</p>
+    <div class="actions">
+      <a class="btn-primary" href="/lead-form">Try the live demo</a>
+      <a class="btn-ghost" href="#how">How it works</a>
+    </div>
+    <p class="notice">Demo form: use fake details. Submissions are stored.</p>
+    <div class="stack">
+      <span class="chip">FastAPI</span>
+      <span class="chip">n8n</span>
+      <span class="chip">Caddy</span>
+      <span class="chip">Cloudflare Turnstile</span>
+      <span class="chip">OpenRouter</span>
+      <span class="chip">Supabase</span>
+      <span class="chip">Docker</span>
+    </div>
+  </div>
+  <div class="pipeline-card">
+    <p class="pipeline-title">Pipeline at a glance</p>
+    <div class="pipeline-stage">
+      <span class="stage-name">Capture</span>
+      <span class="pill pill-live">LIVE</span>
+    </div>
+    <div class="pipeline-stage">
+      <span class="stage-name">Qualify</span>
+      <span class="pill pill-live">LIVE</span>
+    </div>
+    <div class="pipeline-stage">
+      <span class="stage-name">Store</span>
+      <span class="pill pill-live">LIVE</span>
+    </div>
+    <div class="pipeline-stage">
+      <span class="stage-name">Follow up</span>
+      <span class="pill pill-dry">DRY-RUN</span>
+    </div>
+    <div class="pipeline-stage">
+      <span class="stage-name">Alert</span>
+      <span class="pill pill-live">LIVE</span>
+    </div>
+  </div>
+</header>
+
+<!-- ===================== MAIN ===================== -->
+<main id="main" tabindex="-1">
+
+<!-- ---- HOW IT WORKS ---- -->
+<section class="card" id="how" aria-labelledby="how-h">
+  <h2 id="how-h">How it works</h2>
+
+  <!-- Architecture diagram -->
+  <p class="sr-only">Architecture diagram showing four horizontal layers: Edge (Browser and Caddy), Orchestration (n8n), Service (FastAPI calling OpenRouter and Supabase), and Data and channels (Slack, plus dry-run email, SMS and CRM). Caddy, n8n and FastAPI run inside one Docker Compose server boundary.</p>
+  <div class="diagram-wrap">
+    <svg class="dsvg" role="img" aria-label="Layered architecture: Browser to Caddy to n8n to FastAPI inside one Docker Compose server, with OpenRouter and Supabase on the service layer, and Slack plus dry-run channels on the data layer." viewBox="0 0 1100 520" width="100%" height="auto">
+      <title>Request flow and architecture diagram</title>
+      <desc>Four horizontal bands. Edge: Browser sends HTTPS to Caddy. Orchestration: n8n validates, checks CAPTCHA, retries. Service: FastAPI calls OpenRouter for LLM scoring and Supabase for storage. Data and channels: Slack gets a summary without personal details; email, SMS and CRM are dry-run here.</desc>
+      <defs>
+        <marker id="ah" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="var(--muted)"/>
+        </marker>
+        <marker id="ah-dry" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L8,3 z" fill="var(--dryrun)"/>
+        </marker>
+      </defs>
+
+      <!-- Band backgrounds -->
+      <rect class="band" x="15" y="10"  width="1070" height="105" rx="6"/>
+      <rect class="band" x="15" y="125" width="1070" height="115" rx="6"/>
+      <rect class="band" x="15" y="250" width="1070" height="130" rx="6"/>
+      <rect class="band" x="15" y="390" width="1070" height="120" rx="6"/>
+
+      <!-- Band labels -->
+      <text class="band-lbl" x="32" y="30">Edge</text>
+      <text class="band-lbl" x="32" y="147">Orchestration</text>
+      <text class="band-lbl" x="32" y="272">Service</text>
+      <text class="band-lbl" x="32" y="412">Data and channels</text>
+
+      <!-- Server boundary -->
+      <rect class="bound" x="265" y="18" width="440" height="350" rx="10"/>
+      <text class="bound-lbl" x="282" y="35">One server (Docker Compose)</text>
+
+      <!-- Edge band -->
+      <rect class="box-accent" x="45" y="50" width="130" height="54" rx="8"/>
+      <text class="lbl" x="110" y="81" text-anchor="middle">Browser</text>
+
+      <rect class="box" x="405" y="50" width="280" height="54" rx="8"/>
+      <text class="lbl" x="545" y="72" text-anchor="middle">Caddy</text>
+      <text class="sub-lbl" x="545" y="90" text-anchor="middle">HTTPS, CSP, rate limits</text>
+
+      <!-- Orchestration band -->
+      <rect class="box" x="405" y="156" width="280" height="58" rx="8"/>
+      <text class="lbl" x="545" y="180" text-anchor="middle">n8n</text>
+      <text class="sub-lbl" x="545" y="198" text-anchor="middle">validate, CAPTCHA check, retries</text>
+
+      <!-- Service band -->
+      <rect class="box" x="405" y="280" width="280" height="62" rx="8"/>
+      <text class="lbl" x="545" y="305" text-anchor="middle">FastAPI</text>
+      <text class="sub-lbl" x="545" y="325" text-anchor="middle">API key, LLM scoring, rule-based fallback</text>
+
+      <rect class="box" x="775" y="262" width="275" height="50" rx="8"/>
+      <text class="lbl" x="912" y="283" text-anchor="middle">OpenRouter</text>
+      <text class="sub-lbl" x="912" y="299" text-anchor="middle">LLM model</text>
+
+      <rect class="box" x="775" y="322" width="275" height="50" rx="8"/>
+      <text class="lbl" x="912" y="343" text-anchor="middle">Supabase</text>
+      <text class="sub-lbl" x="912" y="359" text-anchor="middle">lead stored once</text>
+
+      <!-- Data and channels band -->
+      <rect class="box" x="405" y="422" width="280" height="58" rx="8"/>
+      <text class="lbl" x="545" y="446" text-anchor="middle">Slack</text>
+      <text class="sub-lbl" x="545" y="464" text-anchor="middle">summary only</text>
+
+      <rect class="box-dashed" x="775" y="422" width="275" height="58" rx="8"/>
+      <text class="lbl" x="912" y="446" text-anchor="middle">Email / SMS / CRM</text>
+      <text class="sub-lbl" x="912" y="464" text-anchor="middle">(dry-run here)</text>
+
+      <!-- Arrows -->
+      <!-- Browser -> Caddy -->
+      <line class="arrow" x1="175" y1="77" x2="403" y2="77"/>
+      <text class="edge-lbl" x="220" y="69" text-anchor="middle">HTTPS</text>
+
+      <!-- Caddy -> n8n (down) -->
+      <line class="arrow" x1="545" y1="104" x2="545" y2="154"/>
+
+      <!-- n8n -> FastAPI (down) -->
+      <line class="arrow" x1="545" y1="214" x2="545" y2="278"/>
+
+      <!-- FastAPI -> OpenRouter -->
+      <line class="arrow" x1="685" y1="296" x2="773" y2="287"/>
+
+      <!-- FastAPI -> Supabase -->
+      <line class="arrow" x1="685" y1="326" x2="773" y2="347"/>
+
+      <!-- FastAPI -> dry-run block (clean elbow outside Slack) -->
+      <path class="arrow-dashed" d="M 650 342 L 650 400 L 732 400 L 732 451 L 773 451"/>
+
+      <!-- n8n -> Slack (orthogonal elbow left of FastAPI) -->
+      <path class="arrow" d="M 405 185 L 295 185 L 295 451 L 403 451"/>
+      <text class="edge-lbl" x="350" y="305" text-anchor="middle">no personal</text>
+      <text class="edge-lbl" x="350" y="317" text-anchor="middle">details</text>
+    </svg>
+  </div>
+
+  <!-- Step cards (3x2) -->
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">1</div>
+      <strong>Edge checks</strong>
+      <p>CAPTCHA, size cap and rate limits applied at the edge before the request goes any further.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <strong>Accepted immediately</strong>
+      <p>The form gets its answer first; processing continues in the background.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <strong>LLM scoring</strong>
+      <p>The lead is scored by an LLM; the email address and phone number are not sent to the model.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <strong>Stored once</strong>
+      <p>Delivery flags prevent duplicate sends even if the pipeline retries.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">5</div>
+      <strong>Follow-up prepared</strong>
+      <p>Email, SMS and CRM sync for warm and hot leads; cold leads are stored only.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">6</div>
+      <strong>Agent alert</strong>
+      <p>Posted without personal details so the alert is safe to share in a team channel.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ---- WHAT THE AGENT SEES ---- -->
+<section class="card" aria-labelledby="agent-h">
+  <div class="agent-split">
+    <div class="agent-info">
+      <h2 id="agent-h">What the agent sees</h2>
+      <p class="agent-caption">No name, email, phone or message text ever appears in the alert.</p>
+      <p class="agent-note">Hot and warm leads notify <code>#leads</code> with scoring and channel status, while terminal pipeline failures route to <code>#lead-alerts</code>.</p>
+    </div>
+    <div class="slack-wrap">
+      <div class="slack-header">
+        <span class="slack-chan">#leads</span>
+        <span class="slack-sub">incoming lead summary</span>
+        <span class="ex-badge">Illustrative example</span>
+      </div>
+      <div class="slack-body">
+        <div class="slack-accent"></div>
+        <pre class="slack-msg">HOT lead - score 73  [DRY RUN: nothing was sent]
+Property: house | Location: Austin, TX | Budget: $450k-$550k | Timeline: within 2 months
+Steps: email: dry_run | sms: dry_run | crm: dry_run
+Lead ID: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ---- WHAT IS LIVE AND WHAT IS DRY-RUN ---- -->
+<section class="card" aria-labelledby="live-h">
+  <h2 id="live-h">What is live and what is dry-run</h2>
+  <div class="table-wrap">
+    <table>
+      <caption>Channel delivery status on this demo deployment</caption>
+      <thead>
+        <tr>
+          <th scope="col">Channel</th>
+          <th scope="col">Status here</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <th scope="row">Lead intake form with CAPTCHA</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">AI scoring</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Storage (database)</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Slack summary</th>
+          <td><span class="pill pill-live">LIVE</span></td>
+        </tr>
+        <tr>
+          <th scope="row">Follow-up email</th>
+          <td><span class="pill pill-dry">DRY-RUN</span> Implemented via Gmail OAuth; dry-run on this public demo so submissions never mail strangers.</td>
+        </tr>
+        <tr>
+          <th scope="row">Follow-up SMS</th>
+          <td><span class="pill pill-dry">DRY-RUN</span> Implemented via Twilio with phone validation and GSM-7 formatting; dry-run on this public demo.</td>
+        </tr>
+        <tr>
+          <th scope="row">CRM sync</th>
+          <td><span class="pill pill-dry">DRY-RUN</span> Implemented via HubSpot idempotent contact upsert; dry-run on this public demo.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="tbl-note">Dry-run is the default; sending is enabled only by an explicit setting.</p>
+</section>
+
+<!-- ---- BENTO GRID ---- -->
+<section class="card" aria-labelledby="eng-h">
+  <h2 id="eng-h">Engineering highlights</h2>
+  <div class="bento">
+    <div class="bento-card bento-wide">
+      <strong>API key on every route</strong>
+      Every API route needs a key; only the health check is open.
+    </div>
+    <div class="bento-card">
+      <strong>No direct internet access</strong>
+      The services behind the form are not reachable from the internet directly.
+    </div>
+    <div class="bento-card">
+      <strong>CAPTCHA fails closed</strong>
+      A missing or invalid token is rejected before the request reaches the backend.
+    </div>
+    <div class="bento-card bento-wide">
+      <strong>Classified retries</strong>
+      Failed steps are classified and retried with backoff, up to 3 attempts.
+    </div>
+    <div class="bento-card">
+      <strong>Rule-based fallback</strong>
+      If the LLM is unavailable on the final attempt a rule-based scorer still stores the lead.
+    </div>
+    <div class="bento-card">
+      <strong>First write wins</strong>
+      A retried request cannot overwrite a stored lead; idempotency is enforced at write time.
+    </div>
+  </div>
+</section>
+
+</main>
+
+<!-- ===================== FOOTER ===================== -->
+<footer>
+  <p>Portfolio demo. Submissions are stored; please use fake data.</p>
+  <a href="/lead-form">Try the live demo</a>
+</footer>
+
+</div>
+</body>
+</html>

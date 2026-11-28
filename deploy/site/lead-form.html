@@ -5,41 +5,130 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Request a property viewing</title>
   <style>
+    /* ---- design tokens (light default, matches showcase /) ---- */
+    :root {
+      --bg:          #f4f6fb;
+      --surface:     #ffffff;
+      --surface-2:   #f0f4fb;
+      --fg:          #111827;
+      --muted:       #4b5563;
+      --border:      #cdd5e0;
+      --accent:      #2563eb;
+      --accent-fg:   #ffffff;
+      --live:        #15803d;
+      --live-bg:     #dcfce7;
+      --dryrun:      #92400e;
+      --dryrun-bg:   #fef3c7;
+      --radius:      10px;
+      --shadow:      0 1px 3px rgba(0,0,0,0.08);
+      --space-1:     0.25rem;
+      --space-2:     0.5rem;
+      --space-3:     1rem;
+      --space-4:     1.5rem;
+      --space-5:     2rem;
+      --space-6:     3rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:          #0f1117;
+        --surface:     #1c2333;
+        --surface-2:   #232b3e;
+        --fg:          #e2e8f0;
+        --muted:       #8892a4;
+        --border:      #2d3748;
+        --accent:      #4f8ef7;
+        --accent-fg:   #ffffff;
+        --live:        #4ade80;
+        --live-bg:     #0f2e1a;
+        --dryrun:      #fbbf24;
+        --dryrun-bg:   #2d1f00;
+        --shadow:      0 1px 3px rgba(0,0,0,0.3);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; animation: none !important; }
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { width: 100%; max-width: 100%; overflow-x: clip; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      line-height: 1.5;
-      color: #333;
-      background-color: #f7f9fa;
+      font-size: clamp(0.95rem, 0.9rem + 0.25vw, 1.05rem);
+      line-height: 1.65;
+      color: var(--fg);
+      color-scheme: light dark;
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(ellipse 80% 45% at 50% 0%, rgba(79,142,247,0.12), transparent 70%),
+        linear-gradient(rgba(79,142,247,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(79,142,247,0.05) 1px, transparent 1px);
+      background-size: 100% 100%, 2.5rem 2.5rem, 2.5rem 2.5rem;
       margin: 0;
-      padding: 1rem;
+      padding: clamp(0.75rem, 3vw, 1.5rem) clamp(1rem, 4vw, 2rem) var(--space-6);
     }
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+    main, form, .form-group, .cf-turnstile { min-width: 0; max-width: 100%; }
     .form-container {
-      max-width: 36rem;
-      margin: 2rem auto;
-      background: #ffffff;
-      padding: 2rem;
-      border-radius: 8px;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      width: 100%;
+      max-width: 40rem;
+      min-width: 0;
+      margin: clamp(0.5rem, 3vw, 2rem) auto;
+      background: var(--surface);
+      padding: clamp(1.25rem, 4vw, 2.25rem);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+    }
+    .back {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--accent);
+      text-decoration: none;
+      margin-bottom: var(--space-2);
+    }
+    .back:hover {
+      text-decoration: underline;
+    }
+    .back:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+      border-radius: 4px;
     }
     h1 {
-      margin-top: 0;
-      font-size: 1.5rem;
-      color: #111;
+      margin: 0 0 var(--space-3);
+      font-size: clamp(1.45rem, 3vw, 2rem);
+      font-weight: 800;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      color: var(--fg);
+    }
+    .notice {
+      display: block;
+      background: var(--dryrun-bg);
+      border: 1px solid var(--dryrun);
+      color: var(--dryrun);
+      border-radius: 6px;
+      padding: 0.55rem 0.85rem;
+      font-size: 0.88rem;
+      font-weight: 600;
+      margin: 0 0 var(--space-4);
     }
     .form-group {
-      margin-bottom: 1.25rem;
+      margin-bottom: var(--space-4);
     }
     label {
       display: block;
       font-weight: 600;
-      margin-bottom: 0.25rem;
-      color: #222;
+      font-size: 0.95rem;
+      margin-bottom: var(--space-1);
+      color: var(--fg);
     }
     .help-text {
       font-size: 0.85rem;
-      color: #666;
-      margin-top: 0.25rem;
-      margin-bottom: 0.25rem;
+      color: var(--muted);
+      margin: var(--space-1) 0 0;
     }
     input[type="text"],
     input[type="email"],
@@ -47,38 +136,79 @@
     select,
     textarea {
       width: 100%;
-      padding: 0.6rem;
-      border: 1px solid #ccc;
-      border-radius: 4px;
+      max-width: 100%;
+      min-width: 0;
+      min-height: 44px;
+      padding: 0.65rem 0.8rem;
+      font-family: inherit;
       font-size: 1rem;
-      box-sizing: border-box;
+      line-height: 1.5;
+      color: var(--fg);
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    input[type="text"]:focus,
+    input[type="email"]:focus,
+    input[type="tel"]:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37,99,235,0.2);
+      outline: none;
+    }
+    input[type="text"]:focus-visible,
+    input[type="email"]:focus-visible,
+    input[type="tel"]:focus-visible,
+    select:focus-visible,
+    textarea:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-color: var(--accent);
     }
     textarea {
+      min-height: 7.5rem;
       resize: vertical;
     }
     .cf-turnstile {
-      margin-top: 1rem;
-      margin-bottom: 1rem;
+      margin: var(--space-4) 0;
+      overflow-x: auto;
     }
     button[type="submit"] {
-      background-color: #0066cc;
-      color: #fff;
+      width: 100%;
+      min-height: 44px;
+      background: var(--accent);
+      color: var(--accent-fg);
       border: none;
       padding: 0.75rem 1.5rem;
+      font-family: inherit;
       font-size: 1rem;
-      font-weight: 600;
-      border-radius: 4px;
+      font-weight: 700;
+      border-radius: var(--radius);
       cursor: pointer;
-      width: 100%;
+      transition: opacity 0.15s;
+    }
+    button[type="submit"]:hover:not(:disabled) {
+      opacity: 0.88;
     }
     button[type="submit"]:disabled {
-      background-color: #999;
+      opacity: 0.55;
       cursor: not-allowed;
     }
     #form-status {
-      margin-top: 1rem;
+      margin: var(--space-3) 0 0;
+      font-size: 0.95rem;
       font-weight: 600;
       min-height: 1.5rem;
+      color: var(--fg);
+    }
+    #form-status:not(:empty) {
+      padding: 0.75rem 0.95rem;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 6px;
     }
   </style>
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
@@ -86,7 +216,9 @@
 </head>
 <body>
   <main class="form-container">
+    <a class="back" href="/">Back to the overview</a>
     <h1>Request a property viewing</h1>
+    <p class="notice">Demo form: use fake details. Submissions are stored.</p>
     <form id="lead-form" method="post" action="#">
       <div class="form-group">
         <label for="name">Full Name *</label>
@@ -122,17 +254,17 @@
 
       <div class="form-group">
         <label for="preferred_location">Preferred Location</label>
-        <input type="text" id="preferred_location" name="preferred_location" maxlength="200">
+        <input type="text" id="preferred_location" name="preferred_location" maxlength="200" autocomplete="off">
       </div>
 
       <div class="form-group">
         <label for="budget">Budget</label>
-        <input type="text" id="budget" name="budget" maxlength="200">
+        <input type="text" id="budget" name="budget" maxlength="200" autocomplete="off">
       </div>
 
       <div class="form-group">
         <label for="timeline">Timeline</label>
-        <input type="text" id="timeline" name="timeline" maxlength="200">
+        <input type="text" id="timeline" name="timeline" maxlength="200" autocomplete="off">
       </div>
 
       <div class="cf-turnstile" data-sitekey='{{env "TURNSTILE_SITEKEY"}}'></div>
