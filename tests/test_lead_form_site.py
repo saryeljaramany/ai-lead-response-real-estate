@@ -404,5 +404,80 @@ class TestHGroupNoticeAndAutofill(unittest.TestCase):
         self.assertEqual(_RAW_HTML.count("}}"), 1, "Expected exactly one '}}' in lead-form.html")
 
 
+# Group I: Design token parity with showcase landing page
+class TestIGroupDesignTokenParity(unittest.TestCase):
+
+    @staticmethod
+    def _extract_tokens(html_text):
+        """Parse :root custom properties in light and dark mode from <style>."""
+        style_m = re.search(r"<style>(.*?)</style>", html_text, re.DOTALL | re.IGNORECASE)
+        if not style_m:
+            return {}, {}
+        css = style_m.group(1)
+
+        dark_header = re.search(
+            r"@media\s*\(\s*prefers-color-scheme:\s*dark\s*\)\s*\{", css
+        )
+        dark_css = ""
+        light_css = css
+        if dark_header:
+            depth = 1
+            pos = dark_header.end()
+            while pos < len(css) and depth > 0:
+                ch = css[pos]
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                pos += 1
+            dark_css = css[dark_header.end():pos - 1]
+            light_css = css[:dark_header.start()] + css[pos:]
+
+        def _parse_root_decls(block):
+            root_m = re.search(r":root\s*\{([^}]*)\}", block, re.DOTALL)
+            if not root_m:
+                return {}
+            decls = {}
+            for name, val in re.findall(r"(--[a-z0-9-]+)\s*:\s*([^;]+);", root_m.group(1)):
+                decls[name] = val.strip()
+            return decls
+
+        return _parse_root_decls(light_css), _parse_root_decls(dark_css)
+
+    @classmethod
+    def setUpClass(cls):
+        showcase_html = (_REPO / "deploy" / "site" / "index.html").read_text(encoding="ascii")
+        cls.showcase_light, cls.showcase_dark = cls._extract_tokens(showcase_html)
+        cls.form_light, cls.form_dark = cls._extract_tokens(_RAW_HTML)
+
+    def test_i01_design_token_names_match_showcase(self):
+        cases = [
+            ("light", self.showcase_light, self.form_light),
+            ("dark", self.showcase_dark, self.form_dark),
+        ]
+        for mode, expected, actual in cases:
+            with self.subTest(mode=mode):
+                self.assertGreater(len(expected), 0, f"Showcase {mode} tokens empty")
+                self.assertEqual(
+                    set(actual.keys()),
+                    set(expected.keys()),
+                    f"{mode} design-token names differ between lead-form.html and index.html",
+                )
+
+    def test_i02_design_token_values_identical_to_showcase(self):
+        cases = [
+            ("light", self.showcase_light, self.form_light),
+            ("dark", self.showcase_dark, self.form_dark),
+        ]
+        for mode, expected, actual in cases:
+            for name in sorted(expected.keys() & actual.keys()):
+                with self.subTest(mode=mode, token=name):
+                    self.assertEqual(
+                        actual[name],
+                        expected[name],
+                        f"{mode} token {name} value differs",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
